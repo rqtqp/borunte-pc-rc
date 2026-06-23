@@ -143,7 +143,7 @@ def main():
     current = [float(st.get(f"axis-{i}", 0)) for i in range(6)]
     print(f"Speed: {SPEED}%   Max step: {MAX_STEP}°   Pause: {PAUSE}s   Active joints: {ACTIVE_JOINTS}/6")
 
-    STRAIGHT_UP = [0.0, 25.0, 130.0, 0.0, 57.0, 0.0]
+    STRAIGHT_UP = [0.0, -20.0, 125.0, 0.0, 57.0, 0.0]
     print("Moving to straight up position...")
     move_to(STRAIGHT_UP, speed=30.0, pack_id="init-home")
     current = wait_done()
