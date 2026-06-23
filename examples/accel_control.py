@@ -22,7 +22,7 @@ import time
 
 ROBOT_IP   = "10.0.0.49"
 ROBOT_PORT = 9760
-SERIAL_PORT = "COM8"     # BTT LIS2DW12 USB serial port
+SERIAL_PORT = "COM5"     # BTT LIS2DW12 USB serial port (CircuitPython)
 BAUD       = 115200
 
 SEND_HZ    = 20          # how often to send AddRCC (Hz)
