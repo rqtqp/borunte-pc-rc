@@ -79,7 +79,21 @@ def query_world_pos(sock):
     return [float(v) for v in r.get("queryData", [])]  # [x, y, z, rx, ry, rz]
 
 
-def send_cartesian_move(sock, x, y, z, rx, ry, rz, pack_id):
+def query_alarm(sock):
+    payload = {
+        "dsID": "www.hc-system.com.RemoteMonitor",
+        "packID": "alarm",
+        "reqType": "query",
+        "queryAddr": ["curAlarm", "curMode", "isMoving"],
+    }
+    enc = json.dumps(payload, separators=(",",":")).encode("ascii")
+    sock.sendall(enc)
+    r = json.loads(sock.recv(65536))
+    vals = r.get("queryData", [])
+    return dict(zip(["curAlarm","curMode","isMoving"], vals))
+
+
+def send_cartesian_move(sock, x, y, z, rx, ry, rz, pack_id, verbose=False):
     payload = {
         "dsID": "HCRemoteCommand",
         "reqType": "AddRCC",
@@ -97,8 +111,17 @@ def send_cartesian_move(sock, x, y, z, rx, ry, rz, pack_id):
         }],
     }
     enc = json.dumps(payload, separators=(",", ":")).encode("ascii")
+    if verbose:
+        print(f"\n[TX] {enc.decode()}", flush=True)
     sock.sendall(enc)
-    sock.recv(4096)
+    raw = sock.recv(4096)
+    try:
+        resp = json.loads(raw)
+    except Exception:
+        resp = {"raw": raw.decode("ascii", errors="replace")}
+    if verbose:
+        print(f"[RX] {json.dumps(resp)}", flush=True)
+    return resp
 
 
 def deadzone(v, dz):
@@ -227,15 +250,38 @@ def main():
         tcp_z = clamp(tcp_z + dvz, Z_MIN, Z_MAX)
 
         move_n += 1
+        verbose_this = (move_n == 1)   # always log first command in full
         try:
-            send_cartesian_move(sock, tcp_x, tcp_y, tcp_z,
-                                tcp_rx, tcp_ry, tcp_rz,
-                                pack_id=f"acc-{move_n:05d}")
+            resp = send_cartesian_move(sock, tcp_x, tcp_y, tcp_z,
+                                       tcp_rx, tcp_ry, tcp_rz,
+                                       pack_id=f"acc-{move_n:05d}",
+                                       verbose=verbose_this)
+
+            # Detect error in response
+            resp_str = json.dumps(resp)
+            has_error = ("error" in resp_str.lower() or "alarm" in resp_str.lower()
+                         or "fail" in resp_str.lower())
+            if has_error or verbose_this:
+                print(f"\n[{move_n:05d}] RX: {resp_str}", flush=True)
+
+            if has_error:
+                status = query_alarm(sock)
+                print(f"  curAlarm={status.get('curAlarm')}  "
+                      f"curMode={status.get('curMode')}  "
+                      f"isMoving={status.get('isMoving')}", flush=True)
+                _active = False
+                print("[PAUSED — press Enter to resume or Ctrl+C to exit]", flush=True)
+
             print(f"[{move_n:05d}]  gx:{gx_s:+.2f} gy:{gy_s:+.2f} gz:{gz_s:+.2f}"
                   f"  ->  X:{tcp_x:+7.1f}  Y:{tcp_y:+7.1f}  Z:{tcp_z:+7.1f}   ",
                   end="\r", flush=True)
-        except OSError:
-            print("\nRobot connection lost.")
+        except OSError as e:
+            print(f"\nRobot connection lost: {e}", flush=True)
+            try:
+                status = query_alarm(sock)
+                print(f"  curAlarm={status.get('curAlarm')}  curMode={status.get('curMode')}")
+            except Exception:
+                pass
             break
 
     sock.close()
