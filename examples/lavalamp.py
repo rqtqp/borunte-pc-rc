@@ -143,11 +143,18 @@ def main():
     current = [float(st.get(f"axis-{i}", 0)) for i in range(6)]
     print(f"Speed: {SPEED}%   Max step: {MAX_STEP}°   Pause: {PAUSE}s   Active joints: {ACTIVE_JOINTS}/6")
 
-    STRAIGHT_UP = [0.0, -20.0, 125.0, 0.0, 57.0, 0.0]
+    STRAIGHT_UP  = [0.0, -20.0, 125.0,  0.0, 57.0, 0.0]
+    DANCE_CENTER = [0.0, -30.0,  58.0,  0.0,  0.0, 0.0]  # center of every joint's soft range
+
     print("Moving to straight up position...")
-    move_to(STRAIGHT_UP, speed=30.0, pack_id="init-home")
+    move_to(STRAIGHT_UP, speed=30.0, pack_id="init-up")
+    wait_done()
+    time.sleep(1.0)
+
+    print("Settling to dance center...")
+    move_to(DANCE_CENTER, speed=15.0, pack_id="init-center")
     current = wait_done()
-    print("Home. Waiting 3s before dance starts...")
+    print("Waiting 3s before dance starts...")
     time.sleep(3.0)
     print("Running — Ctrl+C to stop\n")
 
@@ -161,9 +168,11 @@ def main():
         current = wait_done()
         time.sleep(PAUSE)
 
-    # Return to straight up
+    # Return to straight up via dance center
     print("\nReturning to straight up...")
-    move_to(STRAIGHT_UP, speed=50.0, pack_id="home")
+    move_to(DANCE_CENTER, speed=30.0, pack_id="stop-center")
+    wait_done()
+    move_to(STRAIGHT_UP, speed=30.0, pack_id="stop-up")
     wait_done()
     print("Home. Stopped.")
 
