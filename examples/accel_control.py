@@ -149,7 +149,7 @@ def read_latest_accel(ser):
 
 
 def main():
-    global _stop
+    global _stop, _active
     signal.signal(signal.SIGINT, _sigint)
 
     # ── Serial ──────────────────────────────────────────────────────────────────
