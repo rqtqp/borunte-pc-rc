@@ -32,7 +32,7 @@ The PC sends joint target positions as JSON over a plain TCP connection. The con
 
 - Python 3.7 or later (stdlib only — `json` and `socket`)
 - Robot and PC on the same network (Ethernet)
-- Controller IP known (default from factory: `10.0.0.49`)
+- Controller IP known (used in examples: `10.0.0.49`)
 
 ---
 
@@ -42,41 +42,56 @@ Connect your PC to the same network as the controller.
 
 The controller's IP and port are configured on the pendant:
 
-**Pendant** → **Settings** → **Network** → **Communication Mode**
+**Pendant** → **Settings** → **Network** → **Host Network Settings**
 
 | Setting | Value |
 |---------|-------|
-| Port | 9760 |
-| Mode | Server |
-| Protocol | RemoteMonitor |
+| Port (CommunicateMode1) | 9760 |
+| Mode | Serve |
 
 Set your PC's IP to the same subnet (e.g. `10.0.0.x` with mask `255.255.255.0`).
+
+![Network settings on pendant](images/pendant-network-settings.jpg)
 
 Verify connectivity:
 ```bash
 ping 10.0.0.49
 ```
 
-![Network settings on pendant](images/pendant-network-settings.jpg)
-
 ---
 
-## Step 2 — Load the pendant program
+## Step 2 — Set up the pendant program
 
-The controller needs a pendant program running that waits for remote commands.
+The controller needs a program running that waits for remote commands. You can either import the ready-made program or create it manually in about 30 seconds.
+
+### Option A — Import from USB (easiest)
 
 **Download:** [`pendant-program/pc_rc.zip`](pendant-program/pc_rc.zip)
 
-Load it onto the controller (see [`pendant-program/README.md`](pendant-program/README.md) for full instructions):
+1. Copy `pc_rc.zip` to the root of a USB stick
+2. Insert into pendant → **Program** → **Import** → select `pc_rc.zip` → confirm
+3. Open the imported program `pc_rc` from the program list
 
-1. Copy `pc_rc.zip` to a USB stick
-2. Insert into pendant → **Program** → **Import** → select `pc_rc.zip`
-3. Switch pendant to **Auto mode**
-4. Open `pc_rc` → enable **Cycle** mode → press **Start**
+### Option B — Create manually on pendant
 
-The status bar should show the program paused at the "remote command" step.
+1. Switch pendant to **Manual mode**, create a new program
+2. Press **New M CMD** to add an instruction
+3. Select **Long Distance Command** (远程指令) from the type list
+4. Set **Data Source** to `www.hc-system.com.HCRemoteCommand::[HID:100]`
+5. Confirm and save
 
-![Pendant running pc_rc program](images/pendant-pc-rc-running.jpg)
+![Adding Long Distance Command instruction on pendant](images/pendant-add-instruction.jpg)
+
+### Start the program
+
+1. Switch pendant to **Auto mode**
+2. Open the program
+3. Enable **Cycle** mode so it loops after each command executes
+4. Press **Start**
+
+The status bar shows `Auto/Running`. The program pauses at the "Wait Long Distance Command" step — the controller is ready.
+
+![Pendant in Auto/Running mode waiting for remote command](images/pendant-pc-rc-running.jpg)
 
 ---
 
@@ -160,8 +175,8 @@ python examples/lavalamp.py
 ```
 Running — Ctrl+C to stop
 
-[0001] ['AddRCC', 'ok']  J1: +23.1  J2: -41.7  J3:+105.3  J4: -88.2  J5: +67.0  J6:-112.4
-[0002] ['AddRCC', 'ok']  J1: -12.5  J2: -18.3  J3: +89.0  J4: -53.1  J5: +31.9  J6: -78.2
+[0001] ['AddRCC', 'ok']  J1: +23.1  J2: -32.4  J3:+105.3  J4: -88.2  J5: +67.0  J6:-112.4
+[0002] ['AddRCC', 'ok']  J1: -12.5  J2: -18.7  J3: +89.0  J4: -53.1  J5: +31.9  J6: -78.2
 ...
 ```
 
@@ -235,7 +250,6 @@ examples/
 
 pendant-program/
   pc_rc.zip         Pendant program to load on controller
-  README.md         Load instructions
 ```
 
 ---

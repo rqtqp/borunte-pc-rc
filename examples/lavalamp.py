@@ -24,13 +24,13 @@ import time
 ROBOT_IP = "10.0.0.49"  # <-- change to your robot's IP
 PORT     = 9760
 TIMEOUT  = 5.0
-SPEED    = 20.0    # % of max speed — try 10–50
+SPEED    = 40.0    # % of max speed — try 10–50
 MAX_STEP = 35.0    # max degrees any joint moves per waypoint
 
 # Soft limits — stays comfortably inside the hardware stops
 LIMITS = [
     (-155, 155),   # J1  base rotation    (hard: ±174°)
-    (-105,  75),   # J2  shoulder         (hard: -125° / +85°)
+    ( -45, -15),   # J2  shoulder — narrow range keeps arm upright
     ( -45, 160),   # J3  elbow            (hard: -60° / +175°)
     (-160, 160),   # J4  wrist pitch      (hard: ±180°)
     (-100, 100),   # J5  wrist roll       (hard: ±120°)
