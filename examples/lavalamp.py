@@ -26,13 +26,15 @@ PORT          = 9760
 TIMEOUT       = 5.0
 SPEED         = 15.0   # % of max speed
 MAX_STEP      = 10.0   # max degrees any joint moves per waypoint
-VEL_CHANGE    = 2.0    # max velocity nudge per step — controls how quickly direction drifts
+VEL_CHANGE    = 2.0    # max velocity nudge per step
+DECAY         = 0.85   # velocity loses 15% each step — prevents long one-way drifts
+CENTER_PULL   = 0.04   # fraction of distance to center added to velocity each step
 PAUSE         = 3.0    # seconds to rest between moves — lets servos cool
 ACTIVE_JOINTS = 3      # joints moving per step — others hold and rest
 
 # Soft limits — stays comfortably inside the hardware stops
 LIMITS = [
-    (-130, 130),   # J1  base rotation    (hard: ±174°)
+    ( -90,  90),   # J1  base rotation    (hard: ±174°) — narrowed to avoid high-gravity reach
     ( -40, -20),   # J2  shoulder — already narrow, unchanged
     ( -20, 135),   # J3  elbow            (hard: -60° / +175°)
     (-135, 135),   # J4  wrist pitch      (hard: ±180°)
@@ -110,6 +112,9 @@ def next_waypoint(current):
             target.append(current[i])  # hold — servo rests this step
             continue
 
+        center = (lo + hi) / 2
+        _velocities[i] *= DECAY
+        _velocities[i] += (center - current[i]) * CENTER_PULL
         _velocities[i] += random.uniform(-VEL_CHANGE, VEL_CHANGE)
         _velocities[i] = max(-MAX_STEP, min(MAX_STEP, _velocities[i]))
 
@@ -136,8 +141,13 @@ def main():
         sys.exit(1)
 
     current = [float(st.get(f"axis-{i}", 0)) for i in range(6)]
-    print(f"Start: {[f'{v:+.1f}' for v in current]}")
     print(f"Speed: {SPEED}%   Max step: {MAX_STEP}°   Pause: {PAUSE}s   Active joints: {ACTIVE_JOINTS}/6")
+
+    print("Moving to home (straight up)...")
+    move_to([0.0] * 6, speed=30.0, pack_id="init-home")
+    current = wait_done()
+    print("Home. Waiting 3s before dance starts...")
+    time.sleep(3.0)
     print("Running — Ctrl+C to stop\n")
 
     move_n = 0
