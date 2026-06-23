@@ -4,8 +4,6 @@
 
 Confirmed working on firmware `HC-QC-RX-7.8.07-master-F5.2.1`. No external Python libraries required — stdlib only.
 
-![Robot arm moving to home position](images/robot-home.jpg)
-
 ---
 
 ## How it works
