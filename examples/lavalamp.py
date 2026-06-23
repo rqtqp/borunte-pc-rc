@@ -143,8 +143,9 @@ def main():
     current = [float(st.get(f"axis-{i}", 0)) for i in range(6)]
     print(f"Speed: {SPEED}%   Max step: {MAX_STEP}°   Pause: {PAUSE}s   Active joints: {ACTIVE_JOINTS}/6")
 
-    print("Moving to home (straight up)...")
-    move_to([0.0] * 6, speed=30.0, pack_id="init-home")
+    STRAIGHT_UP = [0.0, 25.0, 130.0, 0.0, 57.0, 0.0]
+    print("Moving to straight up position...")
+    move_to(STRAIGHT_UP, speed=30.0, pack_id="init-home")
     current = wait_done()
     print("Home. Waiting 3s before dance starts...")
     time.sleep(3.0)
@@ -160,9 +161,9 @@ def main():
         current = wait_done()
         time.sleep(PAUSE)
 
-    # Return to home
-    print("\nReturning to home (0°)...")
-    move_to([0.0] * 6, speed=50.0, pack_id="home")
+    # Return to straight up
+    print("\nReturning to straight up...")
+    move_to(STRAIGHT_UP, speed=50.0, pack_id="home")
     wait_done()
     print("Home. Stopped.")
 
