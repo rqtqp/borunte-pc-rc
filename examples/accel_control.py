@@ -298,8 +298,8 @@ def main():
                 print("[PAUSED — press Enter to resume or Ctrl+C to exit]", flush=True)
 
             print(f"[{move_n:05d}]  gx:{gx_s:+.2f} gy:{gy_s:+.2f} gz:{gz_s:+.2f}"
-                  f"  ->  X:{tcp_x:+7.1f}  Y:{tcp_y:+7.1f}  Z:{tcp_z:+7.1f}   ",
-                  end="\r", flush=True)
+                  f"  ->  X:{tcp_x:+7.1f}  Y:{tcp_y:+7.1f}  Z:{tcp_z:+7.1f}",
+                  flush=True)
         except OSError as e:
             print(f"\nRobot connection lost: {e}", flush=True)
             try:
