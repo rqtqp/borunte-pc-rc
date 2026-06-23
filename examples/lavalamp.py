@@ -31,12 +31,12 @@ PAUSE      = 0.4    # seconds to rest between moves — reduces servo duty cycle
 
 # Soft limits — stays comfortably inside the hardware stops
 LIMITS = [
-    (-150, 150),   # J1  base rotation    (hard: ±174°)
-    ( -40, -20),   # J2  shoulder — narrow range keeps arm upright
-    ( -40, 155),   # J3  elbow            (hard: -60° / +175°)
-    (-155, 155),   # J4  wrist pitch      (hard: ±180°)
-    ( -95,  95),   # J5  wrist roll       (hard: ±120°)
-    (-335, 335),   # J6  wrist yaw        (hard: ±360°)
+    (-130, 130),   # J1  base rotation    (hard: ±174°)
+    ( -40, -20),   # J2  shoulder — already narrow, unchanged
+    ( -20, 135),   # J3  elbow            (hard: -60° / +175°)
+    (-135, 135),   # J4  wrist pitch      (hard: ±180°)
+    ( -75,  75),   # J5  wrist roll       (hard: ±120°)
+    (-315, 315),   # J6  wrist yaw        (hard: ±360°)
 ]
 
 _stop_requested = False
