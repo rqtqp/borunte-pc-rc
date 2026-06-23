@@ -73,7 +73,7 @@ The controller needs a program running that waits for remote commands. You can e
 ### Option B — Create manually on pendant
 
 1. Switch pendant to **Manual mode**, create a new program
-2. Press **New M CMD** to add an instruction
+2. Press **Vision** to add an instruction
 3. Select **Long Distance Command** (远程指令) from the type list
 4. Set **Data Source** to `www.hc-system.com.HCRemoteCommand::[HID:100]`
 5. Confirm and save
