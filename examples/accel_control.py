@@ -172,17 +172,42 @@ def main():
         sys.exit(1)
 
     # ── Read initial state ───────────────────────────────────────────────────────
-    print("Reading TCP position...")
+    print("Reading arm state...")
     try:
-        world = query_world_pos(sock)
+        payload = {
+            "dsID": "www.hc-system.com.RemoteMonitor",
+            "packID": "init",
+            "reqType": "query",
+            "queryAddr": [
+                "curMode", "curAlarm", "isMoving",
+                "axis-0","axis-1","axis-2","axis-3","axis-4","axis-5",
+                "world-0","world-1","world-2","world-3","world-4","world-5",
+            ],
+        }
+        enc = json.dumps(payload, separators=(",",":")).encode("ascii")
+        sock.sendall(enc)
+        r = json.loads(sock.recv(65536))
+        vals = r.get("queryData", [])
+        cur_mode, cur_alarm, is_moving = vals[0], vals[1], vals[2]
+        joints = [float(v) for v in vals[3:9]]
+        world  = [float(v) for v in vals[9:15]]
     except Exception as e:
-        print(f"Failed to read world position: {e}")
+        print(f"Failed to read arm state: {e}")
         sys.exit(1)
+
+    print(f"  Mode={cur_mode}  Alarm={cur_alarm}  Moving={is_moving}")
+    print(f"  J1={joints[0]:+7.2f}  J2={joints[1]:+7.2f}  J3={joints[2]:+7.2f}"
+          f"  J4={joints[3]:+7.2f}  J5={joints[4]:+7.2f}  J6={joints[5]:+7.2f}")
 
     tcp_x,  tcp_y,  tcp_z  = world[0], world[1], world[2]
     tcp_rx, tcp_ry, tcp_rz = world[3], world[4], world[5]
-    print(f"  TCP:  X={tcp_x:.1f}  Y={tcp_y:.1f}  Z={tcp_z:.1f}"
+    print(f"  X={tcp_x:.1f}  Y={tcp_y:.1f}  Z={tcp_z:.1f}"
           f"  RX={tcp_rx:.1f}  RY={tcp_ry:.1f}  RZ={tcp_rz:.1f}")
+
+    if str(cur_alarm) != "0":
+        print(f"  WARNING: active alarm {cur_alarm} — clear it before tracking")
+    if str(cur_mode) not in ("2", "7"):
+        print(f"  WARNING: curMode={cur_mode}, expected 2 or 7")
 
     print("Reading sensor...")
     ax_s, ay_s, az_s = 0.0, 0.0, 9.81
