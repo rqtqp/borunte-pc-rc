@@ -21,11 +21,13 @@ import socket
 import sys
 import time
 
-ROBOT_IP = "10.0.0.49"  # <-- change to your robot's IP
-PORT     = 9760
-TIMEOUT  = 5.0
-SPEED    = 20.0    # % of max speed — try 10–50
-MAX_STEP = 5.0     # max degrees any joint moves per waypoint
+ROBOT_IP   = "10.0.0.49"  # <-- change to your robot's IP
+PORT       = 9760
+TIMEOUT    = 5.0
+SPEED      = 20.0   # % of max speed
+MAX_STEP   = 5.0    # max degrees any joint moves per waypoint
+VEL_CHANGE = 1.5    # max velocity nudge per step — controls how quickly direction drifts
+PAUSE      = 0.4    # seconds to rest between moves — reduces servo duty cycle
 
 # Soft limits — stays comfortably inside the hardware stops
 LIMITS = [
@@ -38,6 +40,7 @@ LIMITS = [
 ]
 
 _stop_requested = False
+_velocities = [random.uniform(-MAX_STEP, MAX_STEP) for _ in range(6)]
 
 
 def _sigint(sig, frame):
@@ -97,17 +100,29 @@ def wait_done():
 
 
 def next_waypoint(current):
+    # Momentum-based: each joint drifts gradually, bounces off soft limits.
+    # Prevents sharp direction reversals that cause servo overload.
     target = []
     for i, (lo, hi) in enumerate(LIMITS):
-        step = random.uniform(-MAX_STEP, MAX_STEP)
-        target.append(max(lo, min(hi, current[i] + step)))
+        _velocities[i] += random.uniform(-VEL_CHANGE, VEL_CHANGE)
+        _velocities[i] = max(-MAX_STEP, min(MAX_STEP, _velocities[i]))
+
+        new_pos = current[i] + _velocities[i]
+        if new_pos <= lo:
+            new_pos = lo
+            _velocities[i] = abs(_velocities[i])   # bounce away from lower limit
+        elif new_pos >= hi:
+            new_pos = hi
+            _velocities[i] = -abs(_velocities[i])  # bounce away from upper limit
+
+        target.append(new_pos)
     return target
 
 
 def main():
     signal.signal(signal.SIGINT, _sigint)
 
-    print(f"Reading current position...")
+    print("Reading current position...")
     try:
         st = query_state()
     except OSError as e:
@@ -116,7 +131,7 @@ def main():
 
     current = [float(st.get(f"axis-{i}", 0)) for i in range(6)]
     print(f"Start: {[f'{v:+.1f}' for v in current]}")
-    print(f"Speed: {SPEED}%   Max step per joint: {MAX_STEP}°")
+    print(f"Speed: {SPEED}%   Max step: {MAX_STEP}°   Pause: {PAUSE}s")
     print("Running — Ctrl+C to stop\n")
 
     move_n = 0
@@ -127,6 +142,7 @@ def main():
         joints = "  ".join(f"J{i+1}:{target[i]:+5.1f}" for i in range(6))
         print(f"[{move_n:04d}] {result}  {joints}")
         current = wait_done()
+        time.sleep(PAUSE)
 
     # Return to home
     print("\nReturning to home (0°)...")
