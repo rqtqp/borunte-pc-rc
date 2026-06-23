@@ -29,12 +29,12 @@ MAX_STEP = 35.0    # max degrees any joint moves per waypoint
 
 # Soft limits — stays comfortably inside the hardware stops
 LIMITS = [
-    (-155, 155),   # J1  base rotation    (hard: ±174°)
-    ( -45, -15),   # J2  shoulder — narrow range keeps arm upright
-    ( -45, 160),   # J3  elbow            (hard: -60° / +175°)
-    (-160, 160),   # J4  wrist pitch      (hard: ±180°)
-    (-100, 100),   # J5  wrist roll       (hard: ±120°)
-    (-340, 340),   # J6  wrist yaw        (hard: ±360°)
+    (-150, 150),   # J1  base rotation    (hard: ±174°)
+    ( -40, -20),   # J2  shoulder — narrow range keeps arm upright
+    ( -40, 155),   # J3  elbow            (hard: -60° / +175°)
+    (-155, 155),   # J4  wrist pitch      (hard: ±180°)
+    ( -95,  95),   # J5  wrist roll       (hard: ±120°)
+    (-335, 335),   # J6  wrist yaw        (hard: ±360°)
 ]
 
 _stop_requested = False
