@@ -21,17 +21,33 @@ The program contains a single "wait for remote command" instruction in a loop. W
 2. Go to **Program** → **Import from file**.
 3. Select `pc_rc.zip`.
 
+## How to create it manually on the pendant
+
+If you prefer to create the program by hand instead of importing the zip:
+
+1. On the pendant, switch to **Manual mode**.
+2. Create a new program.
+3. Press **New M CMD** to add an instruction.
+4. In the instruction type list, select **Long Distance Command** (远程指令).
+5. Set the **Data Source** to `www.hc-system.com.HCRemoteCommand::[HID:100]`.
+6. Confirm and save.
+
+![Adding Long Distance Command instruction on pendant](../images/pendant-add-instruction.jpg)
+
+The instruction appears as: `Wait Long Distance Command Data Source: www.hc-system.com.HCRemoteComm...`
+
+Enable **Cycle** mode on the program so it loops automatically after each command executes.
+
 ## How to run it
 
 1. On the pendant, switch to **Auto mode**.
-2. Open the program `pc_rc`.
-3. Enable **Cycle** mode (so the program loops automatically).
-4. Press **Start**.
-5. The status bar should show the program running and paused at the "remote command" step.
+2. Open the program.
+3. Press **Start**.
+4. The status bar shows `Auto/Running` and the program pauses at the "Wait Long Distance Command" step.
 
 The controller is now in `curMode = 7` (Auto-running) and ready to accept PC motion commands.
 
-![Pendant in Auto mode with pc_rc running](../images/pendant-auto-running.jpg)
+![Pendant in Auto/Running mode with program waiting for remote command](../images/pendant-pc-rc-running.jpg)
 
 ## What you should see on the PC
 
