@@ -24,7 +24,7 @@ import time
 ROBOT_IP = "10.0.0.49"  # <-- change to your robot's IP
 PORT     = 9760
 TIMEOUT  = 5.0
-SPEED    = 40.0    # % of max speed — try 10–50
+SPEED    = 20.0    # % of max speed — try 10–50
 MAX_STEP = 5.0     # max degrees any joint moves per waypoint
 
 # Soft limits — stays comfortably inside the hardware stops
