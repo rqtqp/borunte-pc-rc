@@ -3,8 +3,7 @@ accel_control.py — Hold the BTT LIS2DW12. Arm mirrors tilt in joint space.
 
 Mapping (velocity mode — stop tilting = arm stops):
   Roll  (left / right)   -> J6  (wrist yaw, ±360°)
-  Pitch (fwd  / back)    -> J2  (shoulder)
-  J1,J3-J5 stay fixed.
+  J1-J5 stay fixed.
 
 Safe zone: ±10° dead band per axis.
 Speed bands: every 15° adds one tier (25 / 50 / 75 / 100%).
@@ -48,7 +47,6 @@ LOOKAHEAD   = 25.0          # degrees — arm cruises toward this; refreshed eac
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -350.0, 350.0
-J2_MIN, J2_MAX = -100.0,  70.0
 
 # Display range for the band bars
 _DISPLAY_MAX = DEAD_ANGLE + len(BAND_PCT) * BAND_DEG   # 70°
@@ -204,14 +202,11 @@ def draw(pitch, roll, j1, j2, joints, active, move_n, alarm_str):
     print(f"  ROLL  → J6  [{control_bar(roll)}]  {roll:+5.1f}°")
     print(f"               {vel_label(roll)}")
     print()
-    print(f"  PITCH → J2  [{control_bar(pitch)}]  {pitch:+5.1f}°")
-    print(f"               {vel_label(pitch)}")
-    print()
     print(f"  · dead ±{DEAD_ANGLE:.0f}°   " +
           "  ".join(f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°={BAND_PCT[i]}%"
                     for i in range(len(BAND_PCT))))
     print()
-    print(f"  Target   J6={j1:+7.2f}°   J2={j2:+7.2f}°")
+    print(f"  Target   J6={j1:+7.2f}°")
     print(f"  Current  J1={joints[0]:+7.2f}°   J2={joints[1]:+7.2f}°  "
           f"J3={joints[2]:+7.2f}°")
     print(f"           J4={joints[3]:+7.2f}°   J5={joints[4]:+7.2f}°  "
@@ -285,11 +280,9 @@ def main():
     pitch_s = math.degrees(math.atan2(-ax_med, math.sqrt(ay_med**2 + az_med**2)))
     roll_s  = math.degrees(math.atan2(ay_med, az_med))
 
-    # J1, J3-J5 frozen at startup; J6 is roll-controlled, J2 is pitch-controlled
-    j1_base   = joints[0]
-    j3j5_base = joints[2:5]
+    # J1-J5 all frozen at startup; only J6 is controlled
+    j1_j5_base = joints[0:5]
     j6 = joints[5]
-    j2 = joints[1]
 
     interval  = 1.0 / SEND_HZ
     move_n    = 0
@@ -316,7 +309,7 @@ def main():
         if now - last_draw >= 0.12:
             with _lock:
                 active = _active
-            draw(pitch_s, roll_s, j6, j2, joints, active, move_n, alarm_str)
+            draw(pitch_s, roll_s, j6, 0, joints, active, move_n, alarm_str)
             last_draw = now
 
         if now - last_send < interval:
@@ -338,29 +331,23 @@ def main():
         except OSError:
             pass
 
-        spd1, dir1 = tilt_to_speed(roll_s)
-        spd2, dir2 = tilt_to_speed(pitch_s)
-        speed = max(spd1, spd2)
+        spd, direction = tilt_to_speed(roll_s)
 
-        def make_target(j6v, j2v):
-            return [j1_base, j2v] + list(j3j5_base) + [j6v]
-
-        if speed == 0:
+        if spd == 0:
             # Dead zone — send stop only on the transition from moving to stopped
             if not was_active:
                 continue
             was_active = False
             j6 = joints[5]
-            j2 = joints[1]
-            target = make_target(j6, j2)
+            target = list(j1_j5_base) + [j6]
             smooth = "0"
         else:
             # Active — project lookahead from actual current position
             was_active = True
-            j6 = clamp(joints[5] + dir1 * LOOKAHEAD, J6_MIN, J6_MAX) if spd1 > 0 else joints[5]
-            j2 = clamp(joints[1] + dir2 * LOOKAHEAD, J2_MIN, J2_MAX) if spd2 > 0 else joints[1]
-            target = make_target(j6, j2)
+            j6 = clamp(joints[5] + direction * LOOKAHEAD, J6_MIN, J6_MAX)
+            target = list(j1_j5_base) + [j6]
             smooth = "1"
+        speed = spd
 
         move_n += 1
 
