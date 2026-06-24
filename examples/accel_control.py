@@ -46,7 +46,7 @@ STEP_DEG    = 60.0   # degrees per queued waypoint
 QUEUE_DEPTH =  4     # instructions to send per cycle (1 emptyList=1 + 3 emptyList=0 = 240° total)
 
 # Joint soft limits (degrees)
-J6_MIN, J6_MAX = -350.0, 350.0
+J6_MIN, J6_MAX = -3600.0, 3600.0   # J6 is continuous rotation, no hard stops
 
 # Display range for the band bars
 _DISPLAY_MAX = DEAD_ANGLE + len(BAND_SPEEDS) * BAND_DEG   # 70°
@@ -388,14 +388,6 @@ def main():
             if "joints" in st:
                 joints = st["joints"]
         except OSError:
-            time.sleep(POLL_INTERVAL)
-            continue
-
-        # Skip if already at the limit in the commanded direction
-        at_limit = (direction > 0 and joints[5] >= J6_MAX - 1.0) or \
-                   (direction < 0 and joints[5] <= J6_MIN + 1.0)
-        if at_limit:
-            alarm_str = f"J6 limit reached ({joints[5]:+.0f}°) — tilt opposite to reverse"
             time.sleep(POLL_INTERVAL)
             continue
 
