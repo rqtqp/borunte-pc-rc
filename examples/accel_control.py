@@ -39,12 +39,13 @@ MEDIAN_WINDOW = 9           # samples in median filter (~180ms at 50Hz); kills t
 ALPHA         = 0.08        # EMA smoothing after median (lower = smoother, more lag)
 
 # Control mapping: pitch → X, roll → Y
-# Dead zone: ±10° per axis — arm stays still while tilt is within this range
-# Ramp: velocity grows linearly from 0 at DEAD_ANGLE to CART_VEL_MAX at MAX_ANGLE
-DEAD_ANGLE    = 10.0        # degrees — safe zone, no movement
-MAX_ANGLE     = 45.0        # degrees — full speed
-CART_VEL_MAX  = 5.0         # mm per tick at MAX_ANGLE tilt (5mm × 10Hz = 50 mm/s max)
-MIN_DELTA     = 2.0         # mm — suppress command if TCP target didn't move enough
+# Dead zone: ±10°, then four 15°-wide speed bands
+DEAD_ANGLE = 10.0           # degrees — safe zone, no movement
+BAND_DEG   = 15.0           # width of each speed band after dead zone
+# Speed in mm/tick for bands 1-4  (× SEND_HZ = mm/s)
+# band 1: 10-25°   band 2: 25-40°   band 3: 40-55°   band 4: 55°+
+BAND_SPEEDS = [1.0, 2.5, 4.0, 5.0]
+MIN_DELTA   = 2.0           # mm — suppress command if TCP target didn't move enough
 
 # Workspace limits in world-frame mm
 X_MIN, X_MAX = -400.0,  400.0
@@ -229,7 +230,9 @@ def main():
 
     print()
     print(f"Mapping:  pitch (fwd/back) -> X   roll (left/right) -> Y   Z fixed")
-    print(f"Dead zone: ±{DEAD_ANGLE}°  Full speed at: ±{MAX_ANGLE}°  Max: {CART_VEL_MAX} mm/tick")
+    bands = "  ".join(f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°={s}mm/tick"
+                      for i, s in enumerate(BAND_SPEEDS))
+    print(f"Dead zone: ±{DEAD_ANGLE}°  Bands: {bands}")
     print("Press Enter to start tracking. Press Enter again to pause. Ctrl+C to exit.")
     print()
 
@@ -258,13 +261,12 @@ def main():
     last_tcp   = (tcp_x, tcp_y, tcp_z)
 
     def tilt_to_vel(angle_deg):
-        """Map tilt angle to velocity with dead zone and linear ramp."""
         a = abs(angle_deg)
         if a < DEAD_ANGLE:
             return 0.0
-        eff = min(a - DEAD_ANGLE, MAX_ANGLE - DEAD_ANGLE)
-        v = eff / (MAX_ANGLE - DEAD_ANGLE) * CART_VEL_MAX
-        return math.copysign(v, angle_deg)
+        band = int((a - DEAD_ANGLE) / BAND_DEG)
+        band = min(band, len(BAND_SPEEDS) - 1)
+        return math.copysign(BAND_SPEEDS[band], angle_deg)
 
     while not _stop:
         v = read_latest_accel(ser)

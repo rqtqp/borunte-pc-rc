@@ -21,9 +21,10 @@ SERIAL_PORT = "COM5"
 BAUD        = 115200
 
 # Must match accel_control.py
-DEAD_ANGLE   = 10.0    # degrees — safe zone, no arm movement
-MAX_ANGLE    = 45.0    # degrees — full speed
-CART_VEL_MAX = 5.0     # mm per tick at MAX_ANGLE
+DEAD_ANGLE  = 10.0
+BAND_DEG    = 15.0
+BAND_SPEEDS = [1.0, 2.5, 4.0, 5.0]   # mm/tick for bands 1-4
+SEND_HZ     = 10
 
 _stop = False
 
@@ -70,39 +71,35 @@ def tilt_to_vel(angle_deg):
     a = abs(angle_deg)
     if a < DEAD_ANGLE:
         return 0.0
-    eff = min(a - DEAD_ANGLE, MAX_ANGLE - DEAD_ANGLE)
-    v = eff / (MAX_ANGLE - DEAD_ANGLE) * CART_VEL_MAX
-    return math.copysign(v, angle_deg)
+    band = min(int((a - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
+    return math.copysign(BAND_SPEEDS[band], angle_deg)
 
 
-def control_bar(angle, width=40):
-    """
-    Angle bar with dead zone markers.
-    Width covers ±MAX_ANGLE degrees.
-    Dead zone region marked with dots, active region with #.
-    """
+# Total display range: dead zone + all bands
+_DISPLAY_MAX = DEAD_ANGLE + len(BAND_SPEEDS) * BAND_DEG   # 10 + 4*15 = 70°
+_BAND_CHARS  = ["1", "2", "3", "4"]                        # one char per band
+
+
+def control_bar(angle, width=42):
+    """Band-aware bar. Each zone filled with its band number, cursor = │►◄."""
     center = width // 2
-    dead_px = int(DEAD_ANGLE / MAX_ANGLE * center)   # pixels for dead zone on each side
-
-    # Build the bar character by character
     bar = []
     for i in range(width):
-        pos = i - center                              # pixel offset from center
-        adeg = abs(pos) / center * MAX_ANGLE         # angle this pixel represents
-
+        pos   = i - center
+        adeg  = abs(pos) / center * _DISPLAY_MAX
         if adeg < DEAD_ANGLE:
-            bar.append("·")                           # dead zone
+            bar.append("·")
         else:
-            bar.append(" ")                           # active zone (empty by default)
+            b = min(int((adeg - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
+            bar.append(_BAND_CHARS[b])
 
-    # Place cursor at current angle
-    cursor_px = int(angle / MAX_ANGLE * center)
+    # Place cursor
+    cursor_px = int(angle / _DISPLAY_MAX * center)
     cursor_px = max(-center, min(center - 1, cursor_px))
     idx = center + cursor_px
-
     vel = tilt_to_vel(angle)
-    if abs(angle) < DEAD_ANGLE:
-        bar[idx] = "│"                               # inside dead zone
+    if vel == 0.0:
+        bar[idx] = "│"
     elif vel > 0:
         bar[idx] = "►"
     else:
@@ -115,9 +112,10 @@ def vel_label(angle):
     v = tilt_to_vel(angle)
     if v == 0.0:
         return "HOLD  (dead zone)"
-    mm_s = abs(v) * 10                              # mm/s at SEND_HZ=10
+    mm_s = abs(v) * SEND_HZ
+    band = min(int((abs(angle) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
     direction = "→" if v > 0 else "←"
-    return f"{direction}  {mm_s:.0f} mm/s"
+    return f"{direction}  band {band+1}  {mm_s:.0f} mm/s"
 
 
 def main():
@@ -187,8 +185,12 @@ def main():
         print(f"  Pitch (fwd/back) : {pitch:+7.2f}°")
         print(f"  Roll  (left/right): {roll:+7.2f}°")
         print()
-        print(f"  ── Arm control preview  (dead={DEAD_ANGLE}°  full={MAX_ANGLE}°) ──")
-        print(f"  ·  = dead zone   space = active   ►◄ = current position")
+        bands_str = "  ".join(
+            f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°={s}mm/t"
+            for i, s in enumerate(BAND_SPEEDS))
+        print(f"  ── Arm control preview ──────────────────────────────")
+        print(f"  dead=±{DEAD_ANGLE}°  bands: {bands_str}")
+        print(f"  · = dead zone   1234 = speed bands   ►◄ = you")
         print()
         print(f"  PITCH → X  [{control_bar(pitch)}]  {pitch:+5.1f}°")
         print(f"              {vel_label(pitch)}")
