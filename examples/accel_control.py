@@ -20,22 +20,26 @@ import msvcrt
 import serial
 import signal
 import socket
+import statistics
 import sys
 import threading
 import time
+from collections import deque
 
 ROBOT_IP    = "10.0.0.49"
 ROBOT_PORT  = 9760
 SERIAL_PORT = "COM5"
 BAUD        = 115200
 
-SEND_HZ      = 10           # motion command rate (Hz)
-ALPHA        = 0.2          # low-pass filter on gravity components
+SEND_HZ       = 10          # motion command rate (Hz)
+MEDIAN_WINDOW = 9           # samples in median filter (~180ms at 50Hz); kills tap spikes
+ALPHA         = 0.08        # EMA smoothing after median (lower = smoother, more lag)
 
-CART_VEL_MAX = 6.0          # mm per tick at ±1g (full tilt)
-Z_VEL_MAX    = 4.0          # mm per tick at full Z gesture (face-down)
-DEAD_XY      = 0.05         # fraction of g (~3°) — X/Y dead zone
-DEAD_Z       = 0.40         # fraction of g (~66° from flat) — Z dead zone
+CART_VEL_MAX  = 4.0         # mm per tick at ±1g (full tilt)
+Z_VEL_MAX     = 3.0         # mm per tick at full Z gesture (face-down)
+DEAD_XY       = 0.08        # fraction of g (~5°) — X/Y dead zone
+DEAD_Z        = 0.40        # fraction of g (~66° from flat) — Z dead zone
+MIN_DELTA     = 2.0         # mm — minimum TCP change needed to send a new command
 
 # Workspace limits in world-frame mm
 X_MIN, X_MAX = -400.0,  400.0
@@ -227,23 +231,34 @@ def main():
     kt = threading.Thread(target=_key_thread, daemon=True)
     kt.start()
 
-    # ── Smoothed gravity components ──────────────────────────────────────────────
+    # ── Filter state ─────────────────────────────────────────────────────────────
     G = 9.81
+    buf = deque(maxlen=MEDIAN_WINDOW)   # raw sample ring buffer for median filter
     gx_s = ax_s / G
     gy_s = ay_s / G
     gz_s = az_s / G
 
-    interval  = 1.0 / SEND_HZ
-    move_n    = 0
-    last_send = time.monotonic()
+    # Seed buffer
+    for _ in range(MEDIAN_WINDOW):
+        buf.append((ax_s, ay_s, az_s))
+
+    interval   = 1.0 / SEND_HZ
+    move_n     = 0
+    last_send  = time.monotonic()
+    last_tcp   = (tcp_x, tcp_y, tcp_z)     # last actually-sent position
 
     while not _stop:
         v = read_latest_accel(ser)
         if v:
-            ax, ay, az = v
-            gx_s = ALPHA * (ax / G) + (1 - ALPHA) * gx_s
-            gy_s = ALPHA * (ay / G) + (1 - ALPHA) * gy_s
-            gz_s = ALPHA * (az / G) + (1 - ALPHA) * gz_s
+            buf.append(v)
+            # Step 1: median per axis — kills tap/touch spikes
+            ax_med = statistics.median(s[0] for s in buf)
+            ay_med = statistics.median(s[1] for s in buf)
+            az_med = statistics.median(s[2] for s in buf)
+            # Step 2: EMA on median output — smooths residual noise
+            gx_s = ALPHA * (ax_med / G) + (1 - ALPHA) * gx_s
+            gy_s = ALPHA * (ay_med / G) + (1 - ALPHA) * gy_s
+            gz_s = ALPHA * (az_med / G) + (1 - ALPHA) * gz_s
 
         now = time.monotonic()
         if now - last_send < interval:
@@ -274,6 +289,17 @@ def main():
         tcp_y = clamp(tcp_y + dvy, Y_MIN, Y_MAX)
         tcp_z = clamp(tcp_z + dvz, Z_MIN, Z_MAX)
 
+        # Send gate: skip command if target barely moved (prevents jitter chatter)
+        moved = (abs(tcp_x - last_tcp[0]) > MIN_DELTA or
+                 abs(tcp_y - last_tcp[1]) > MIN_DELTA or
+                 abs(tcp_z - last_tcp[2]) > MIN_DELTA)
+        if not moved:
+            print(f"[hold ]  gx:{gx_s:+.2f} gy:{gy_s:+.2f} gz:{gz_s:+.2f}"
+                  f"  ->  X:{tcp_x:+7.1f}  Y:{tcp_y:+7.1f}  Z:{tcp_z:+7.1f}",
+                  flush=True)
+            continue
+
+        last_tcp = (tcp_x, tcp_y, tcp_z)
         move_n += 1
         verbose_this = (move_n == 1)   # always log first command in full
         try:
