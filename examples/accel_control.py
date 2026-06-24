@@ -46,7 +46,7 @@ STEP_DEG    = 60.0   # degrees per queued waypoint
 QUEUE_DEPTH =  4     # instructions to send per cycle (1 emptyList=1 + 3 emptyList=0 = 240° total)
 
 # Joint soft limits (degrees)
-J6_MIN, J6_MAX = -3600.0, 3600.0   # J6 is continuous rotation, no hard stops
+J6_MIN, J6_MAX = -355.0, 355.0
 
 # Display range for the band bars
 _DISPLAY_MAX = DEAD_ANGLE + len(BAND_SPEEDS) * BAND_DEG   # 70°
