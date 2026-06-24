@@ -323,9 +323,11 @@ def main():
             was_active = False
             continue
 
-        # Always get live position — lookahead is relative to where arm actually is
+        # Gate on isMoving=0 — controller rejects mid-motion commands (error 200)
         try:
             st = query_status(sock)
+            if st.get("isMoving") not in (0, "0"):
+                continue
             if "joints" in st:
                 joints = st["joints"]
         except OSError:
@@ -334,27 +336,25 @@ def main():
         spd, direction = tilt_to_speed(roll_s)
 
         if spd == 0:
-            # Dead zone — send stop only on the transition from moving to stopped
+            # Dead zone — send stop only on transition from moving to stopped
             if not was_active:
                 continue
             was_active = False
             j6 = joints[5]
             target = list(j1_j5_base) + [j6]
-            smooth = "0"
+            speed = 15
         else:
-            # Active — project lookahead from actual current position
+            # Active — project lookahead from actual position; arm cruises the full distance
             was_active = True
             j6 = clamp(joints[5] + direction * LOOKAHEAD, J6_MIN, J6_MAX)
             target = list(j1_j5_base) + [j6]
-            smooth = "1"
-        speed = spd
+            speed = spd
 
         move_n += 1
 
         try:
             resp = send_joint_move(sock, target, pack_id=f"acc-{move_n:05d}",
-                                   speed=speed if speed > 0 else 15,
-                                   smooth=smooth, verbose=(move_n == 1))
+                                   speed=speed, verbose=(move_n == 1))
             resp_str = json.dumps(resp)
             has_error = any(w in resp_str.lower() for w in ("error","alarm","fail"))
             if has_error:
