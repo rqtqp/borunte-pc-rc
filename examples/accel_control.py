@@ -40,16 +40,16 @@ ALPHA         = 0.08        # EMA smoothing
 # Tilt → speed bands
 DEAD_ANGLE  = 10.0          # degrees — no movement inside
 BAND_DEG    = 15.0          # band width
-BAND_PCT    = [15, 30, 50, 75]   # speed % sent to controller per band
+BAND_SPEEDS = [20, 40, 60, 80]  # speed % per band — set directly, no derivation
 
 # How far ahead of the actual arm position to project the target
-LOOKAHEAD   = 120.0         # degrees — arm cruises toward this; refreshed each tick
+LOOKAHEAD   = 120.0         # degrees — arm cruises toward this on each step
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -350.0, 350.0
 
 # Display range for the band bars
-_DISPLAY_MAX = DEAD_ANGLE + len(BAND_PCT) * BAND_DEG   # 70°
+_DISPLAY_MAX = DEAD_ANGLE + len(BAND_SPEEDS) * BAND_DEG   # 70°
 _BAND_CHARS  = ["1", "2", "3", "4"]
 
 _stop   = False
@@ -158,12 +158,12 @@ def clamp(v, lo, hi):
 
 
 def tilt_to_speed(angle_deg):
-    """Return speed % (0 = dead zone, else BAND_PCT value) and direction sign."""
+    """Return speed % (0 = dead zone, else BAND_SPEEDS value) and direction sign."""
     a = abs(angle_deg)
     if a < DEAD_ANGLE:
         return 0, 0
-    band = min(int((a - DEAD_ANGLE) / BAND_DEG), len(BAND_PCT) - 1)
-    return BAND_PCT[band], int(math.copysign(1, angle_deg))
+    band = min(int((a - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
+    return BAND_SPEEDS[band], int(math.copysign(1, angle_deg))
 
 
 def control_bar(angle, width=42):
@@ -174,7 +174,7 @@ def control_bar(angle, width=42):
         if adeg < DEAD_ANGLE:
             bar.append("·")
         else:
-            b = min(int((adeg - DEAD_ANGLE) / BAND_DEG), len(BAND_PCT) - 1)
+            b = min(int((adeg - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
             bar.append(_BAND_CHARS[b])
     cursor_px = int(angle / _DISPLAY_MAX * center)
     cursor_px = max(-center, min(center - 1, cursor_px))
@@ -188,7 +188,7 @@ def vel_label(angle):
     spd, _ = tilt_to_speed(angle)
     if spd == 0:
         return "HOLD"
-    band = min(int((abs(angle) - DEAD_ANGLE) / BAND_DEG), len(BAND_PCT) - 1)
+    band = min(int((abs(angle) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
     return f"{'→' if angle > 0 else '←'}  band {band+1}  {spd}%"
 
 
@@ -203,8 +203,8 @@ def draw(pitch, roll, j1, j2, joints, active, move_n, alarm_str):
     print(f"               {vel_label(roll)}")
     print()
     print(f"  · dead ±{DEAD_ANGLE:.0f}°   " +
-          "  ".join(f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°={BAND_PCT[i]}%"
-                    for i in range(len(BAND_PCT))))
+          "  ".join(f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°={BAND_SPEEDS[i]}%"
+                    for i in range(len(BAND_SPEEDS))))
     print()
     print(f"  Target   J6={j1:+7.2f}°")
     print(f"  Current  J1={joints[0]:+7.2f}°   J2={joints[1]:+7.2f}°  "
@@ -289,7 +289,9 @@ def main():
     last_send = time.monotonic()
     alarm_str = ""
     last_draw = 0.0
-    was_active = False  # track transition to dead zone for explicit stop
+    was_active = False
+    last_band = -1   # band index of last sent command (-1 = none)
+    last_dir  =  0   # direction of last sent command
 
     while not _stop:
         v = read_latest_accel(ser)
@@ -334,19 +336,26 @@ def main():
             pass
 
         spd, direction = tilt_to_speed(roll_s)
+        cur_band = min(int((abs(roll_s) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1) if spd > 0 else -1
 
         if spd == 0:
             # Dead zone — send stop only on transition from moving to stopped
             if not was_active:
                 continue
             was_active = False
+            last_band, last_dir = -1, 0
             j6 = joints[5]
             target = list(j1_j5_base) + [j6]
             speed = 15
         else:
-            # Active — project lookahead from actual position; arm cruises the full distance
             was_active = True
-            j6 = clamp(joints[5] + direction * LOOKAHEAD, J6_MIN, J6_MAX)
+            # Only send a new command when band or direction changed.
+            # Same band + same direction = arm is already cruising at the right speed; skip.
+            if cur_band == last_band and direction == last_dir:
+                continue
+            last_band, last_dir = cur_band, direction
+            # Send to joint limit — arm cruises continuously until band/direction changes
+            j6 = J6_MAX if direction > 0 else J6_MIN
             target = list(j1_j5_base) + [j6]
             speed = spd
 
