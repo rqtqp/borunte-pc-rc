@@ -109,13 +109,17 @@ def query_status(sock):
         "dsID": "www.hc-system.com.RemoteMonitor",
         "packID": "st",
         "reqType": "query",
-        "queryAddr": ["curAlarm", "curMode", "isMoving"],
+        "queryAddr": ["curAlarm", "curMode", "isMoving",
+                      "axis-0","axis-1","axis-2","axis-3","axis-4","axis-5"],
     }
     enc = json.dumps(payload, separators=(",",":")).encode("ascii")
     sock.sendall(enc)
     r = json.loads(sock.recv(65536))
     vals = r.get("queryData", [])
-    return dict(zip(["curAlarm","curMode","isMoving"], vals))
+    d = dict(zip(["curAlarm","curMode","isMoving"], vals[:3]))
+    if len(vals) >= 9:
+        d["joints"] = [float(v) for v in vals[3:9]]
+    return d
 
 
 def send_joint_move(sock, joints, pack_id, verbose=False):
@@ -322,6 +326,17 @@ def main():
         if not active:
             continue
 
+        # Query arm state first — don't accumulate target while arm is busy.
+        # This also refreshes live joint positions for the display.
+        try:
+            st = query_status(sock)
+            if st.get("isMoving") not in (0, "0"):
+                continue
+            if "joints" in st:
+                joints = st["joints"]
+        except OSError:
+            pass
+
         dj1 = tilt_to_vel(roll_s)
         dj2 = tilt_to_vel(pitch_s)
 
@@ -331,14 +346,6 @@ def main():
         moved = (abs(j1 - last_j1) > MIN_DELTA or abs(j2 - last_j2) > MIN_DELTA)
         if not moved:
             continue
-
-        # Don't interrupt an in-progress move — controller rejects overlapping commands
-        try:
-            st = query_status(sock)
-            if st.get("isMoving") not in (0, "0"):
-                continue
-        except OSError:
-            pass
 
         last_j1, last_j2 = j1, j2
         move_n += 1
