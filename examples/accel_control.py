@@ -349,13 +349,12 @@ def main():
             speed = 15
         else:
             was_active = True
-            # Only send a new command when band or direction changed.
-            # Same band + same direction = arm is already cruising at the right speed; skip.
-            if cur_band == last_band and direction == last_dir:
-                continue
+            # Send next cruise step. isMoving gate above already ensures we never
+            # interrupt a running move — no extra same-band skip needed.
+            # Only update speed when band/direction changes (avoid redundant resends
+            # mid-cruise — the gate handles that; here we just record what we sent).
             last_band, last_dir = cur_band, direction
-            # Send to joint limit — arm cruises continuously until band/direction changes
-            j6 = J6_MAX if direction > 0 else J6_MIN
+            j6 = clamp(joints[5] + direction * LOOKAHEAD, J6_MIN, J6_MAX)
             target = list(j1_j5_base) + [j6]
             speed = spd
 
