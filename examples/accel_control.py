@@ -33,7 +33,7 @@ ROBOT_PORT  = 9760
 SERIAL_PORT = "COM5"
 BAUD        = 115200
 
-POLL_INTERVAL = 0.02        # 20ms — isMoving check rate while arm is cruising
+POLL_INTERVAL = 0.01        # 10ms — isMoving check rate while arm is cruising
 MEDIAN_WINDOW = 9           # ~180ms spike filter
 ALPHA         = 0.08        # EMA smoothing
 
@@ -42,8 +42,7 @@ DEAD_ANGLE  = 10.0          # degrees — no movement inside
 BAND_DEG    = 15.0          # band width
 BAND_SPEEDS = [100]  # speed % per band — set directly, no derivation
 
-STEP_DEG    = 60.0   # degrees per queued waypoint
-QUEUE_DEPTH =  4     # instructions to send per cycle (1 emptyList=1 + 3 emptyList=0 = 240° total)
+STEP_DEG    = 300.0  # degrees per step — long cruise, fewer stops per rotation
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -355.0, 355.0
@@ -396,40 +395,29 @@ def main():
         last_band, last_dir = cur_band, direction
         speed = spd
 
-        # Queue QUEUE_DEPTH instructions: first with emptyList=1 (clears old queue),
-        # rest with emptyList=0 (appended without interrupting; arm executes them back-to-back).
-        j6_pos = joints[5]
-        j6 = j6_pos  # reset display to actual current position
+        j6_target = clamp(joints[5] + direction * STEP_DEG, J6_MIN, J6_MAX)
+        j6 = j6_target
+        move_n += 1
+
         try:
-            for i in range(QUEUE_DEPTH):
-                next_j6 = clamp(j6_pos + direction * STEP_DEG, J6_MIN, J6_MAX)
-                if abs(next_j6 - j6_pos) < 0.1:
-                    break  # at limit, no more movement possible
-                j6_pos = next_j6
-                move_n += 1
-                resp = send_single_move(sock, list(j1_j5_base) + [j6_pos],
-                                        pack_id=f"acc-{move_n:05d}",
-                                        speed=speed,
-                                        empty_list="1" if i == 0 else "0",
-                                        verbose=(move_n == 1))
-                j6 = j6_pos
-                resp_str = json.dumps(resp)
-                if i == 0 and any(w in resp_str.lower() for w in ("error", "alarm", "fail")):
-                    status = query_status(sock)
-                    _active = False
-                    print("\033[2J\033[H", end="")
-                    print("═" * 56)
-                    print("  ERROR on move #" + str(move_n))
-                    print("═" * 56)
-                    print(f"  RX: {resp_str}")
-                    print(f"  curAlarm={status.get('curAlarm')}  "
-                          f"curMode={status.get('curMode')}  "
-                          f"isMoving={status.get('isMoving')}")
-                    print("\n  Press Enter to resume or Ctrl+C to exit.")
-                    alarm_str = f"err: {resp_str}"
-                    break
-                elif i > 0 and any(w in resp_str.lower() for w in ("error", "fail")):
-                    break  # emptyList=0 rejected — single-step fallback, no problem
+            resp = send_single_move(sock, list(j1_j5_base) + [j6_target],
+                                    pack_id=f"acc-{move_n:05d}",
+                                    speed=speed,
+                                    verbose=(move_n == 1))
+            resp_str = json.dumps(resp)
+            if any(w in resp_str.lower() for w in ("error", "alarm", "fail")):
+                status = query_status(sock)
+                _active = False
+                print("\033[2J\033[H", end="")
+                print("═" * 56)
+                print("  ERROR on move #" + str(move_n))
+                print("═" * 56)
+                print(f"  RX: {resp_str}")
+                print(f"  curAlarm={status.get('curAlarm')}  "
+                      f"curMode={status.get('curMode')}  "
+                      f"isMoving={status.get('isMoving')}")
+                print("\n  Press Enter to resume or Ctrl+C to exit.")
+                alarm_str = f"err: {resp_str}"
         except OSError as e:
             alarm_str = f"connection lost: {e}"
             print(f"\n!! {alarm_str}")
