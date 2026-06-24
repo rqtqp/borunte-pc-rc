@@ -23,7 +23,7 @@ BAUD        = 115200
 # Must match accel_control.py
 DEAD_ANGLE  = 10.0
 BAND_DEG    = 15.0
-BAND_SPEEDS = [1.0, 2.5, 4.0, 5.0]   # mm/tick for bands 1-4
+BAND_SPEEDS = [0.5, 1.0, 1.5, 2.0]   # mm/tick → ×10 Hz = 5/10/15/20 mm/s
 SEND_HZ     = 10
 
 _stop = False

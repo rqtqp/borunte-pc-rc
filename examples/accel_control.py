@@ -44,7 +44,7 @@ DEAD_ANGLE = 10.0           # degrees — safe zone, no movement
 BAND_DEG   = 15.0           # width of each speed band after dead zone
 # Speed in mm/tick for bands 1-4  (× SEND_HZ = mm/s)
 # band 1: 10-25°   band 2: 25-40°   band 3: 40-55°   band 4: 55°+
-BAND_SPEEDS = [1.0, 2.5, 4.0, 5.0]
+BAND_SPEEDS = [0.5, 1.0, 1.5, 2.0]   # mm/tick → ×10 Hz = 5/10/15/20 mm/s
 MIN_DELTA   = 2.0           # mm — suppress command if TCP target didn't move enough
 
 # Workspace limits in world-frame mm
