@@ -43,7 +43,7 @@ BAND_DEG    = 15.0          # band width
 BAND_SPEEDS = [100]  # speed % per band — set directly, no derivation
 
 # How far ahead of the actual arm position to project the target
-LOOKAHEAD   = 120.0         # degrees — arm cruises toward this on each step
+LOOKAHEAD   = 300.0         # degrees — arm cruises toward this on each step
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -350.0, 350.0
@@ -119,6 +119,20 @@ def query_status(sock):
     if len(vals) >= 9:
         d["joints"] = [float(v) for v in vals[3:9]]
     return d
+
+
+def send_action_stop(sock, pack_id):
+    payload = {
+        "dsID": "www.hc-system.com.RemoteMonitor",
+        "reqType": "actionStop",
+        "packID": pack_id,
+    }
+    enc = json.dumps(payload, separators=(",",":")).encode("ascii")
+    sock.sendall(enc)
+    try:
+        return json.loads(sock.recv(4096))
+    except Exception:
+        return {}
 
 
 def send_joint_move(sock, joints, pack_id, speed=20, smooth="0", verbose=False):
@@ -325,7 +339,23 @@ def main():
             was_active = False
             continue
 
-        # Gate on isMoving=0 — controller rejects mid-motion commands (error 200)
+        spd, direction = tilt_to_speed(roll_s)
+        cur_band = min(int((abs(roll_s) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1) if spd > 0 else -1
+
+        if spd == 0:
+            # Dead zone — actionStop fires immediately, even mid-cruise
+            if not was_active:
+                continue
+            was_active = False
+            last_band, last_dir = -1, 0
+            try:
+                move_n += 1
+                send_action_stop(sock, f"stop-{move_n:05d}")
+            except OSError:
+                pass
+            continue
+
+        # Gate on isMoving=0 — controller rejects mid-motion AddRCC (error 200)
         try:
             st = query_status(sock)
             if st.get("isMoving") not in (0, "0"):
@@ -335,28 +365,11 @@ def main():
         except OSError:
             pass
 
-        spd, direction = tilt_to_speed(roll_s)
-        cur_band = min(int((abs(roll_s) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1) if spd > 0 else -1
-
-        if spd == 0:
-            # Dead zone — send stop only on transition from moving to stopped
-            if not was_active:
-                continue
-            was_active = False
-            last_band, last_dir = -1, 0
-            j6 = joints[5]
-            target = list(j1_j5_base) + [j6]
-            speed = 15
-        else:
-            was_active = True
-            # Send next cruise step. isMoving gate above already ensures we never
-            # interrupt a running move — no extra same-band skip needed.
-            # Only update speed when band/direction changes (avoid redundant resends
-            # mid-cruise — the gate handles that; here we just record what we sent).
-            last_band, last_dir = cur_band, direction
-            j6 = clamp(joints[5] + direction * LOOKAHEAD, J6_MIN, J6_MAX)
-            target = list(j1_j5_base) + [j6]
-            speed = spd
+        was_active = True
+        last_band, last_dir = cur_band, direction
+        j6 = clamp(joints[5] + direction * LOOKAHEAD, J6_MIN, J6_MAX)
+        target = list(j1_j5_base) + [j6]
+        speed = spd
 
         move_n += 1
 
