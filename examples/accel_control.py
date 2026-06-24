@@ -40,7 +40,7 @@ ALPHA         = 0.08        # EMA smoothing
 # Tilt → speed bands
 DEAD_ANGLE  = 10.0          # degrees — no movement inside
 BAND_DEG    = 15.0          # band width
-BAND_SPEEDS = [20, 40, 60, 80]  # speed % per band — set directly, no derivation
+BAND_SPEEDS = [20, 40, 60, 80, 100]  # speed % per band — set directly, no derivation
 
 # How far ahead of the actual arm position to project the target
 LOOKAHEAD   = 120.0         # degrees — arm cruises toward this on each step
