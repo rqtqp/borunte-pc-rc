@@ -169,15 +169,14 @@ def send_joint_move(sock, joints, pack_id, speed=20, smooth="0", verbose=False):
     return resp
 
 
-def send_batch_move(sock, j1_j5, j6_start, direction, pack_id, speed, verbose=False):
-    """Send NUM_STEPS via-points in one AddRCC.
-    smooth=9 on all but the last so the arm blends through without stopping.
-    Returns the final J6 target actually sent."""
+def send_batch_move(sock, j1_j5, j6_start, direction, pack_id, speed,
+                    empty_list="1", verbose=False):
+    """Send NUM_STEPS waypoints in one AddRCC. Returns (response, final_j6).
+    empty_list='0' appends to the controller queue without interrupting current motion."""
     instructions = []
     j6 = j6_start
     for i in range(NUM_STEPS):
         j6 = clamp(j6 + direction * STEP_DEG, J6_MIN, J6_MAX)
-        is_last = (i == NUM_STEPS - 1)
         instructions.append({
             "oneshot": "1",
             "action": "4",
@@ -187,19 +186,19 @@ def send_batch_move(sock, j1_j5, j6_start, direction, pack_id, speed, verbose=Fa
             "m6": "0.0", "m7": "0.0",
             "ckStatus": "0x3F",
             "speed": str(float(speed)),
-            "delay": "0.0", "tool": "0", "coord": "0",
-            "smooth": "0" if is_last else "9",
+            "delay": "0.0", "tool": "0", "coord": "0", "smooth": "0",
         })
     payload = {
         "dsID": "HCRemoteCommand",
         "reqType": "AddRCC",
-        "emptyList": "1",
+        "emptyList": empty_list,
         "packID": pack_id,
         "instructions": instructions,
     }
     enc = json.dumps(payload, separators=(",",":")).encode("ascii")
     if verbose:
-        print(f"\n[TX batch {NUM_STEPS}×{STEP_DEG}°] final J6={j6:.1f}", flush=True)
+        print(f"\n[TX emptyList={empty_list} {NUM_STEPS}×{STEP_DEG}°] J6 {j6_start:.1f}→{j6:.1f}",
+              flush=True)
     sock.sendall(enc)
     raw = sock.recv(4096)
     try:
@@ -408,7 +407,8 @@ def main():
         move_n += 1
 
         try:
-            resp, _j6_final = send_batch_move(sock, j1_j5_base, joints[5], direction,
+            # Batch 1: clear queue and start motion
+            resp, j6_queued = send_batch_move(sock, j1_j5_base, joints[5], direction,
                                               pack_id=f"acc-{move_n:05d}",
                                               speed=speed, verbose=(move_n == 1))
             resp_str = json.dumps(resp)
@@ -416,12 +416,10 @@ def main():
             if has_error:
                 status = query_status(sock)
                 _active = False
-                # Print clearly outside the live screen
                 print("\033[2J\033[H", end="")
                 print("═" * 56)
                 print("  ERROR on move #" + str(move_n))
                 print("═" * 56)
-                print(f"  TX target:  J1={target[0]:.2f}  J2={target[1]:.2f}")
                 print(f"  RX raw:     {resp_str}")
                 print(f"  curAlarm={status.get('curAlarm')}  "
                       f"curMode={status.get('curMode')}  "
@@ -429,8 +427,22 @@ def main():
                 print()
                 print("  Press Enter to resume or Ctrl+C to exit.")
                 alarm_str = f"RX={resp_str}"
-            else:
-                alarm_str = ""
+                continue
+
+            alarm_str = ""
+
+            # Batch 2+: immediately append more steps while arm is still executing batch 1.
+            # emptyList=0 adds to the queue without interrupting current motion.
+            # If the controller rejects mid-motion appends we fall back gracefully.
+            for _ in range(2):
+                move_n += 1
+                r2, j6_queued = send_batch_move(sock, j1_j5_base, j6_queued, direction,
+                                                pack_id=f"acc-{move_n:05d}",
+                                                speed=speed, empty_list="0")
+                r2_str = json.dumps(r2)
+                if any(w in r2_str.lower() for w in ("error", "fail")):
+                    break  # controller rejected queue append — single-batch fallback
+
         except OSError as e:
             alarm_str = f"connection lost: {e}"
             print(f"\n!! {alarm_str}")
