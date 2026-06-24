@@ -400,6 +400,15 @@ def main():
             time.sleep(POLL_INTERVAL)
             continue
 
+        # Skip if already at the limit in the commanded direction
+        at_limit = (direction > 0 and joints[5] >= J6_MAX - 1.0) or \
+                   (direction < 0 and joints[5] <= J6_MIN + 1.0)
+        if at_limit:
+            alarm_str = f"J6 limit reached ({joints[5]:+.0f}°) — tilt opposite to reverse"
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        alarm_str = ""
         was_active = True
         last_band, last_dir = cur_band, direction
         speed = spd
@@ -411,6 +420,7 @@ def main():
             resp, j6_queued = send_batch_move(sock, j1_j5_base, joints[5], direction,
                                               pack_id=f"acc-{move_n:05d}",
                                               speed=speed, verbose=(move_n == 1))
+            j6 = j6_queued  # update display target
             resp_str = json.dumps(resp)
             has_error = any(w in resp_str.lower() for w in ("error","alarm","fail"))
             if has_error:
