@@ -343,14 +343,25 @@ def main():
             has_error = any(w in resp_str.lower() for w in ("error","alarm","fail"))
             if has_error:
                 status = query_alarm(sock)
-                alarm_str = (f"alarm={status.get('curAlarm')}  "
-                             f"mode={status.get('curMode')}  "
-                             f"moving={status.get('isMoving')}  |  RX: {resp_str}")
                 _active = False
+                # Print clearly outside the live screen
+                print("\033[2J\033[H", end="")
+                print("═" * 56)
+                print("  ERROR on move #" + str(move_n))
+                print("═" * 56)
+                print(f"  TX target:  J1={target[0]:.2f}  J2={target[1]:.2f}")
+                print(f"  RX raw:     {resp_str}")
+                print(f"  curAlarm={status.get('curAlarm')}  "
+                      f"curMode={status.get('curMode')}  "
+                      f"isMoving={status.get('isMoving')}")
+                print()
+                print("  Press Enter to resume or Ctrl+C to exit.")
+                alarm_str = f"RX={resp_str}"
             else:
                 alarm_str = ""
         except OSError as e:
             alarm_str = f"connection lost: {e}"
+            print(f"\n!! {alarm_str}")
             break
 
     sock.close()
