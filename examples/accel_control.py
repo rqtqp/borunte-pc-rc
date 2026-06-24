@@ -7,7 +7,7 @@ Mapping (velocity mode — stop tilting = arm stops):
   J3-J6 stay fixed.
 
 Safe zone: ±10° dead band per axis.
-Speed bands: every 15° adds one tier (5 / 10 / 15 / 20 °/s).
+Speed bands: every 15° adds one tier (25 / 50 / 75 / 100%).
 
 Controls:
   Enter    — toggle tracking ON / OFF
@@ -189,8 +189,8 @@ def vel_label(angle):
     if v == 0.0:
         return "HOLD"
     band = min(int((abs(angle) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
-    deg_s = abs(v) * SEND_HZ
-    return f"{'→' if v > 0 else '←'}  band {band+1}  {deg_s:.0f} °/s"
+    pct = round(BAND_SPEEDS[band] / BAND_SPEEDS[-1] * 100)
+    return f"{'→' if v > 0 else '←'}  band {band+1}  {pct}%"
 
 
 def draw(pitch, roll, j1, j2, joints, active, move_n, alarm_str):
@@ -207,7 +207,8 @@ def draw(pitch, roll, j1, j2, joints, active, move_n, alarm_str):
     print(f"               {vel_label(pitch)}")
     print()
     print(f"  · dead ±{DEAD_ANGLE:.0f}°   " +
-          "  ".join(f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°={BAND_SPEEDS[i]*SEND_HZ:.0f}°/s"
+          "  ".join(f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°="
+                    f"{round(BAND_SPEEDS[i]/BAND_SPEEDS[-1]*100)}%"
                     for i in range(len(BAND_SPEEDS))))
     print()
     print(f"  Target   J1={j1:+7.2f}°   J2={j2:+7.2f}°")

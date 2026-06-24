@@ -112,10 +112,10 @@ def vel_label(angle):
     v = tilt_to_vel(angle)
     if v == 0.0:
         return "HOLD  (dead zone)"
-    mm_s = abs(v) * SEND_HZ
     band = min(int((abs(angle) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
+    pct = round(BAND_SPEEDS[band] / BAND_SPEEDS[-1] * 100)
     direction = "→" if v > 0 else "←"
-    return f"{direction}  band {band+1}  {mm_s:.0f} mm/s"
+    return f"{direction}  band {band+1}  {pct}%"
 
 
 def main():
@@ -186,7 +186,8 @@ def main():
         print(f"  Roll  (left/right): {roll:+7.2f}°")
         print()
         bands_str = "  ".join(
-            f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°={s}mm/t"
+            f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°="
+            f"{round(s/BAND_SPEEDS[-1]*100)}%"
             for i, s in enumerate(BAND_SPEEDS))
         print(f"  ── Arm control preview ──────────────────────────────")
         print(f"  dead=±{DEAD_ANGLE}°  bands: {bands_str}")
