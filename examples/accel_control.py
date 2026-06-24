@@ -43,7 +43,7 @@ BAND_DEG    = 15.0          # band width
 BAND_PCT    = [15, 30, 50, 75]   # speed % sent to controller per band
 
 # How far ahead of the actual arm position to project the target
-LOOKAHEAD   = 25.0          # degrees — arm cruises toward this; refreshed each tick
+LOOKAHEAD   = 120.0         # degrees — arm cruises toward this; refreshed each tick
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -350.0, 350.0
