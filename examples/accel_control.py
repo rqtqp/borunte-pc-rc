@@ -50,7 +50,7 @@ J6_MIN, J6_MAX = -350.0, 350.0
 
 # Display range for the band bars
 _DISPLAY_MAX = DEAD_ANGLE + len(BAND_SPEEDS) * BAND_DEG   # 70°
-_BAND_CHARS  = ["1", "2", "3", "4"]
+_BAND_CHARS  = ["1", "2", "3", "4", "5"]
 
 _stop   = False
 _active = False
