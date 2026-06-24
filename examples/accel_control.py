@@ -42,8 +42,9 @@ DEAD_ANGLE  = 10.0          # degrees — no movement inside
 BAND_DEG    = 15.0          # band width
 BAND_SPEEDS = [100]  # speed % per band — set directly, no derivation
 
-# How far ahead of the actual arm position to project the target
-LOOKAHEAD   = 45.0          # degrees — ~0.3s step at 100% J6 speed
+# Batch motion: multiple via-points per AddRCC with smooth=9 so arm never stops between them
+STEP_DEG  = 45.0   # degrees per via-point
+NUM_STEPS =  6     # via-points per batch (covers 270° total); arm only stops at the last one
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -350.0, 350.0
@@ -136,6 +137,7 @@ def send_action_stop(sock, pack_id):
 
 
 def send_joint_move(sock, joints, pack_id, speed=20, smooth="0", verbose=False):
+    """Single-instruction move — kept for home/round-trip scripts."""
     payload = {
         "dsID": "HCRemoteCommand",
         "reqType": "AddRCC",
@@ -165,6 +167,48 @@ def send_joint_move(sock, joints, pack_id, speed=20, smooth="0", verbose=False):
     if verbose:
         print(f"[RX] {json.dumps(resp)}", flush=True)
     return resp
+
+
+def send_batch_move(sock, j1_j5, j6_start, direction, pack_id, speed, verbose=False):
+    """Send NUM_STEPS via-points in one AddRCC.
+    smooth=9 on all but the last so the arm blends through without stopping.
+    Returns the final J6 target actually sent."""
+    instructions = []
+    j6 = j6_start
+    for i in range(NUM_STEPS):
+        j6 = clamp(j6 + direction * STEP_DEG, J6_MIN, J6_MAX)
+        is_last = (i == NUM_STEPS - 1)
+        instructions.append({
+            "oneshot": "1",
+            "action": "4",
+            "m0": f"{j1_j5[0]:.3f}", "m1": f"{j1_j5[1]:.3f}",
+            "m2": f"{j1_j5[2]:.3f}", "m3": f"{j1_j5[3]:.3f}",
+            "m4": f"{j1_j5[4]:.3f}", "m5": f"{j6:.3f}",
+            "m6": "0.0", "m7": "0.0",
+            "ckStatus": "0x3F",
+            "speed": str(float(speed)),
+            "delay": "0.0", "tool": "0", "coord": "0",
+            "smooth": "0" if is_last else "9",
+        })
+    payload = {
+        "dsID": "HCRemoteCommand",
+        "reqType": "AddRCC",
+        "emptyList": "1",
+        "packID": pack_id,
+        "instructions": instructions,
+    }
+    enc = json.dumps(payload, separators=(",",":")).encode("ascii")
+    if verbose:
+        print(f"\n[TX batch {NUM_STEPS}×{STEP_DEG}°] final J6={j6:.1f}", flush=True)
+    sock.sendall(enc)
+    raw = sock.recv(4096)
+    try:
+        resp = json.loads(raw)
+    except Exception:
+        resp = {"raw": raw.decode("ascii", errors="replace")}
+    if verbose:
+        print(f"[RX] {json.dumps(resp)}", flush=True)
+    return resp, j6
 
 
 def clamp(v, lo, hi):
@@ -359,15 +403,14 @@ def main():
 
         was_active = True
         last_band, last_dir = cur_band, direction
-        j6 = clamp(joints[5] + direction * LOOKAHEAD, J6_MIN, J6_MAX)
-        target = list(j1_j5_base) + [j6]
         speed = spd
 
         move_n += 1
 
         try:
-            resp = send_joint_move(sock, target, pack_id=f"acc-{move_n:05d}",
-                                   speed=speed, verbose=(move_n == 1))
+            resp, _j6_final = send_batch_move(sock, j1_j5_base, joints[5], direction,
+                                              pack_id=f"acc-{move_n:05d}",
+                                              speed=speed, verbose=(move_n == 1))
             resp_str = json.dumps(resp)
             has_error = any(w in resp_str.lower() for w in ("error","alarm","fail"))
             if has_error:
