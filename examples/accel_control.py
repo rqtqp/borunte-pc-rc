@@ -41,9 +41,9 @@ ALPHA         = 0.08        # EMA smoothing
 # Tilt → joint velocity bands
 DEAD_ANGLE  = 10.0          # degrees — no movement inside
 BAND_DEG    = 15.0          # band width
-BAND_SPEEDS = [0.5, 1.0, 1.5, 2.0]   # °/tick → ×10 Hz = 5/10/15/20 °/s
+BAND_SPEEDS = [2.0, 4.0, 6.0, 8.0]   # °/step — larger steps = proper servo cycles
 
-MIN_DELTA   = 0.3           # degrees — skip command if joint target barely changed
+MIN_DELTA   = 0.5           # degrees — skip command if joint target barely changed
 
 # Joint soft limits (degrees)
 J1_MIN, J1_MAX = -150.0, 150.0
@@ -136,7 +136,7 @@ def send_joint_move(sock, joints, pack_id, verbose=False):
             "m4": f"{joints[4]:.3f}", "m5": f"{joints[5]:.3f}",
             "m6": "0.0", "m7": "0.0",
             "ckStatus": "0x3F",
-            "speed": "30.0",
+            "speed": "20.0",
             "delay": "0.0", "tool": "0", "coord": "0", "smooth": "0",
         }],
     }
@@ -284,10 +284,11 @@ def main():
     pitch_s = math.degrees(math.atan2(-ax_med, math.sqrt(ay_med**2 + az_med**2)))
     roll_s  = math.degrees(math.atan2(ay_med, az_med))
 
-    # Joint targets start at current position
+    # Joint targets start at current position; J3-J6 are frozen at startup
     j1 = joints[0]
     j2 = joints[1]
     last_j1, last_j2 = j1, j2
+    j3j6_base = joints[2:6]   # never changed — prevents micro-corrections from live noise
 
     interval  = 1.0 / SEND_HZ
     move_n    = 0
@@ -327,13 +328,12 @@ def main():
             continue
 
         # Query arm state first — don't accumulate target while arm is busy.
-        # This also refreshes live joint positions for the display.
         try:
             st = query_status(sock)
             if st.get("isMoving") not in (0, "0"):
                 continue
             if "joints" in st:
-                joints = st["joints"]
+                joints = st["joints"]   # display only — j3j6_base stays frozen
         except OSError:
             pass
 
@@ -349,7 +349,7 @@ def main():
 
         last_j1, last_j2 = j1, j2
         move_n += 1
-        target = [j1, j2, joints[2], joints[3], joints[4], joints[5]]
+        target = [j1, j2] + j3j6_base
 
         try:
             resp = send_joint_move(sock, target, pack_id=f"acc-{move_n:05d}",
