@@ -33,7 +33,7 @@ ROBOT_PORT  = 9760
 SERIAL_PORT = "COM5"
 BAUD        = 115200
 
-SEND_HZ       = 5           # reduced — each command is now a long cruise, not a micro-step
+SEND_HZ       = 20          # 50ms poll interval — catch isMoving=0 quickly after each step
 MEDIAN_WINDOW = 9           # ~180ms spike filter
 ALPHA         = 0.08        # EMA smoothing
 
@@ -43,7 +43,7 @@ BAND_DEG    = 15.0          # band width
 BAND_SPEEDS = [100]  # speed % per band — set directly, no derivation
 
 # How far ahead of the actual arm position to project the target
-LOOKAHEAD   = 300.0         # degrees — arm cruises toward this on each step
+LOOKAHEAD   = 60.0          # degrees — short enough for ~0.5s overshoot, long enough to be smooth
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -350.0, 350.0
@@ -343,16 +343,11 @@ def main():
         cur_band = min(int((abs(roll_s) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1) if spd > 0 else -1
 
         if spd == 0:
-            # Dead zone — actionStop fires immediately, even mid-cruise
+            # Dead zone — arm finishes its current step then gets no new commands
             if not was_active:
                 continue
             was_active = False
             last_band, last_dir = -1, 0
-            try:
-                move_n += 1
-                send_action_stop(sock, f"stop-{move_n:05d}")
-            except OSError:
-                pass
             continue
 
         # Gate on isMoving=0 — controller rejects mid-motion AddRCC (error 200)
