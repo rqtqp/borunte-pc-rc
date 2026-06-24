@@ -42,9 +42,8 @@ DEAD_ANGLE  = 10.0          # degrees — no movement inside
 BAND_DEG    = 15.0          # band width
 BAND_SPEEDS = [100]  # speed % per band — set directly, no derivation
 
-# Batch motion: multiple via-points per AddRCC with smooth=9 so arm never stops between them
-STEP_DEG  = 45.0   # degrees per via-point
-NUM_STEPS =  6     # via-points per batch (covers 270° total); arm only stops at the last one
+STEP_DEG    = 60.0   # degrees per queued waypoint
+QUEUE_DEPTH =  4     # instructions to send per cycle (1 emptyList=1 + 3 emptyList=0 = 240° total)
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -350.0, 350.0
@@ -169,36 +168,28 @@ def send_joint_move(sock, joints, pack_id, speed=20, smooth="0", verbose=False):
     return resp
 
 
-def send_batch_move(sock, j1_j5, j6_start, direction, pack_id, speed,
-                    empty_list="1", verbose=False):
-    """Send NUM_STEPS waypoints in one AddRCC. Returns (response, final_j6).
-    empty_list='0' appends to the controller queue without interrupting current motion."""
-    instructions = []
-    j6 = j6_start
-    for i in range(NUM_STEPS):
-        j6 = clamp(j6 + direction * STEP_DEG, J6_MIN, J6_MAX)
-        instructions.append({
-            "oneshot": "1",
-            "action": "4",
-            "m0": f"{j1_j5[0]:.3f}", "m1": f"{j1_j5[1]:.3f}",
-            "m2": f"{j1_j5[2]:.3f}", "m3": f"{j1_j5[3]:.3f}",
-            "m4": f"{j1_j5[4]:.3f}", "m5": f"{j6:.3f}",
-            "m6": "0.0", "m7": "0.0",
-            "ckStatus": "0x3F",
-            "speed": str(float(speed)),
-            "delay": "0.0", "tool": "0", "coord": "0", "smooth": "0",
-        })
+def send_single_move(sock, joints, pack_id, speed, empty_list="1", verbose=False):
+    """Single-instruction AddRCC. empty_list='0' appends to queue without interrupting."""
     payload = {
         "dsID": "HCRemoteCommand",
         "reqType": "AddRCC",
         "emptyList": empty_list,
         "packID": pack_id,
-        "instructions": instructions,
+        "instructions": [{
+            "oneshot": "1",
+            "action": "4",
+            "m0": f"{joints[0]:.3f}", "m1": f"{joints[1]:.3f}",
+            "m2": f"{joints[2]:.3f}", "m3": f"{joints[3]:.3f}",
+            "m4": f"{joints[4]:.3f}", "m5": f"{joints[5]:.3f}",
+            "m6": "0.0", "m7": "0.0",
+            "ckStatus": "0x3F",
+            "speed": str(float(speed)),
+            "delay": "0.0", "tool": "0", "coord": "0", "smooth": "0",
+        }],
     }
     enc = json.dumps(payload, separators=(",",":")).encode("ascii")
     if verbose:
-        print(f"\n[TX emptyList={empty_list} {NUM_STEPS}×{STEP_DEG}°] J6 {j6_start:.1f}→{j6:.1f}",
-              flush=True)
+        print(f"\n[TX emptyList={empty_list}] J6={joints[5]:.1f}", flush=True)
     sock.sendall(enc)
     raw = sock.recv(4096)
     try:
@@ -207,7 +198,7 @@ def send_batch_move(sock, j1_j5, j6_start, direction, pack_id, speed,
         resp = {"raw": raw.decode("ascii", errors="replace")}
     if verbose:
         print(f"[RX] {json.dumps(resp)}", flush=True)
-    return resp, j6
+    return resp
 
 
 def clamp(v, lo, hi):
@@ -413,46 +404,40 @@ def main():
         last_band, last_dir = cur_band, direction
         speed = spd
 
-        move_n += 1
-
+        # Queue QUEUE_DEPTH instructions: first with emptyList=1 (clears old queue),
+        # rest with emptyList=0 (appended without interrupting; arm executes them back-to-back).
+        j6_pos = joints[5]
+        j6 = j6_pos  # reset display to actual current position
         try:
-            # Batch 1: clear queue and start motion
-            resp, j6_queued = send_batch_move(sock, j1_j5_base, joints[5], direction,
-                                              pack_id=f"acc-{move_n:05d}",
-                                              speed=speed, verbose=(move_n == 1))
-            j6 = j6_queued  # update display target
-            resp_str = json.dumps(resp)
-            has_error = any(w in resp_str.lower() for w in ("error","alarm","fail"))
-            if has_error:
-                status = query_status(sock)
-                _active = False
-                print("\033[2J\033[H", end="")
-                print("═" * 56)
-                print("  ERROR on move #" + str(move_n))
-                print("═" * 56)
-                print(f"  RX raw:     {resp_str}")
-                print(f"  curAlarm={status.get('curAlarm')}  "
-                      f"curMode={status.get('curMode')}  "
-                      f"isMoving={status.get('isMoving')}")
-                print()
-                print("  Press Enter to resume or Ctrl+C to exit.")
-                alarm_str = f"RX={resp_str}"
-                continue
-
-            alarm_str = ""
-
-            # Batch 2+: immediately append more steps while arm is still executing batch 1.
-            # emptyList=0 adds to the queue without interrupting current motion.
-            # If the controller rejects mid-motion appends we fall back gracefully.
-            for _ in range(2):
+            for i in range(QUEUE_DEPTH):
+                next_j6 = clamp(j6_pos + direction * STEP_DEG, J6_MIN, J6_MAX)
+                if abs(next_j6 - j6_pos) < 0.1:
+                    break  # at limit, no more movement possible
+                j6_pos = next_j6
                 move_n += 1
-                r2, j6_queued = send_batch_move(sock, j1_j5_base, j6_queued, direction,
-                                                pack_id=f"acc-{move_n:05d}",
-                                                speed=speed, empty_list="0")
-                r2_str = json.dumps(r2)
-                if any(w in r2_str.lower() for w in ("error", "fail")):
-                    break  # controller rejected queue append — single-batch fallback
-
+                resp = send_single_move(sock, list(j1_j5_base) + [j6_pos],
+                                        pack_id=f"acc-{move_n:05d}",
+                                        speed=speed,
+                                        empty_list="1" if i == 0 else "0",
+                                        verbose=(move_n == 1))
+                j6 = j6_pos
+                resp_str = json.dumps(resp)
+                if i == 0 and any(w in resp_str.lower() for w in ("error", "alarm", "fail")):
+                    status = query_status(sock)
+                    _active = False
+                    print("\033[2J\033[H", end="")
+                    print("═" * 56)
+                    print("  ERROR on move #" + str(move_n))
+                    print("═" * 56)
+                    print(f"  RX: {resp_str}")
+                    print(f"  curAlarm={status.get('curAlarm')}  "
+                          f"curMode={status.get('curMode')}  "
+                          f"isMoving={status.get('isMoving')}")
+                    print("\n  Press Enter to resume or Ctrl+C to exit.")
+                    alarm_str = f"err: {resp_str}"
+                    break
+                elif i > 0 and any(w in resp_str.lower() for w in ("error", "fail")):
+                    break  # emptyList=0 rejected — single-step fallback, no problem
         except OSError as e:
             alarm_str = f"connection lost: {e}"
             print(f"\n!! {alarm_str}")
