@@ -33,7 +33,7 @@ ROBOT_PORT  = 9760
 SERIAL_PORT = "COM5"
 BAUD        = 115200
 
-SEND_HZ       = 20          # 50ms poll interval — catch isMoving=0 quickly after each step
+POLL_INTERVAL = 0.02        # 20ms — isMoving check rate while arm is cruising
 MEDIAN_WINDOW = 9           # ~180ms spike filter
 ALPHA         = 0.08        # EMA smoothing
 
@@ -43,7 +43,7 @@ BAND_DEG    = 15.0          # band width
 BAND_SPEEDS = [100]  # speed % per band — set directly, no derivation
 
 # How far ahead of the actual arm position to project the target
-LOOKAHEAD   = 60.0          # degrees — short enough for ~0.5s overshoot, long enough to be smooth
+LOOKAHEAD   = 45.0          # degrees — ~0.3s step at 100% J6 speed
 
 # Joint soft limits (degrees)
 J6_MIN, J6_MAX = -350.0, 350.0
@@ -298,14 +298,12 @@ def main():
     j1_j5_base = joints[0:5]
     j6 = joints[5]
 
-    interval  = 1.0 / SEND_HZ
     move_n    = 0
-    last_send = time.monotonic()
     alarm_str = ""
     last_draw = 0.0
     was_active = False
-    last_band = -1   # band index of last sent command (-1 = none)
-    last_dir  =  0   # direction of last sent command
+    last_band = -1
+    last_dir  =  0
 
     while not _stop:
         v = read_latest_accel(ser)
@@ -328,15 +326,11 @@ def main():
             draw(pitch_s, roll_s, j6, 0, joints, active, move_n, alarm_str)
             last_draw = now
 
-        if now - last_send < interval:
-            time.sleep(0.005)
-            continue
-        last_send = now
-
         with _lock:
             active = _active
         if not active:
             was_active = False
+            time.sleep(POLL_INTERVAL)
             continue
 
         spd, direction = tilt_to_speed(roll_s)
@@ -345,6 +339,7 @@ def main():
         if spd == 0:
             # Dead zone — arm finishes its current step then gets no new commands
             if not was_active:
+                time.sleep(POLL_INTERVAL)
                 continue
             was_active = False
             last_band, last_dir = -1, 0
@@ -354,11 +349,13 @@ def main():
         try:
             st = query_status(sock)
             if st.get("isMoving") not in (0, "0"):
+                time.sleep(POLL_INTERVAL)  # arm still cruising — poll again soon
                 continue
             if "joints" in st:
                 joints = st["joints"]
         except OSError:
-            pass
+            time.sleep(POLL_INTERVAL)
+            continue
 
         was_active = True
         last_band, last_dir = cur_band, direction
