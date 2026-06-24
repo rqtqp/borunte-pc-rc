@@ -104,10 +104,10 @@ def query_arm(sock):
     return vals[0], vals[1], vals[2], [float(v) for v in vals[3:9]]
 
 
-def query_alarm(sock):
+def query_status(sock):
     payload = {
         "dsID": "www.hc-system.com.RemoteMonitor",
-        "packID": "alarm",
+        "packID": "st",
         "reqType": "query",
         "queryAddr": ["curAlarm", "curMode", "isMoving"],
     }
@@ -332,6 +332,14 @@ def main():
         if not moved:
             continue
 
+        # Don't interrupt an in-progress move — controller rejects overlapping commands
+        try:
+            st = query_status(sock)
+            if st.get("isMoving") not in (0, "0"):
+                continue
+        except OSError:
+            pass
+
         last_j1, last_j2 = j1, j2
         move_n += 1
         target = [j1, j2, joints[2], joints[3], joints[4], joints[5]]
@@ -342,7 +350,7 @@ def main():
             resp_str = json.dumps(resp)
             has_error = any(w in resp_str.lower() for w in ("error","alarm","fail"))
             if has_error:
-                status = query_alarm(sock)
+                status = query_status(sock)
                 _active = False
                 # Print clearly outside the live screen
                 print("\033[2J\033[H", end="")
