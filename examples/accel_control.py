@@ -1,10 +1,13 @@
 """
-accel_control.py — Hold the BTT LIS2DW12. Robot TCP mirrors your tilt in world coordinates.
+accel_control.py — Hold the BTT LIS2DW12. Robot TCP moves while you tilt.
 
-Axes (velocity mode):
-  Tilt forward / back   -> World X   (gx component)
-  Tilt left   / right   -> World Y   (gy component)
-  Flip face-down        -> World Z   (gz deviation, activates only past ~66° from flat)
+Mapping (velocity mode — stop tilting = arm stops):
+  Pitch (tilt forward / back)  -> World X
+  Roll  (tilt left  / right)   -> World Y
+  Z stays fixed.
+
+Safe zone: ±10° dead band per axis — arm holds still for small tilts/tremor.
+Speed ramps linearly from 0 at 10° to full at 45°.
 
 Controls:
   Enter    — toggle tracking ON / OFF
@@ -35,11 +38,13 @@ SEND_HZ       = 10          # motion command rate (Hz)
 MEDIAN_WINDOW = 9           # samples in median filter (~180ms at 50Hz); kills tap spikes
 ALPHA         = 0.08        # EMA smoothing after median (lower = smoother, more lag)
 
-CART_VEL_MAX  = 4.0         # mm per tick at ±1g (full tilt)
-Z_VEL_MAX     = 3.0         # mm per tick at full Z gesture (face-down)
-DEAD_XY       = 0.08        # fraction of g (~5°) — X/Y dead zone
-DEAD_Z        = 0.40        # fraction of g (~66° from flat) — Z dead zone
-MIN_DELTA     = 2.0         # mm — minimum TCP change needed to send a new command
+# Control mapping: pitch → X, roll → Y
+# Dead zone: ±10° per axis — arm stays still while tilt is within this range
+# Ramp: velocity grows linearly from 0 at DEAD_ANGLE to CART_VEL_MAX at MAX_ANGLE
+DEAD_ANGLE    = 10.0        # degrees — safe zone, no movement
+MAX_ANGLE     = 45.0        # degrees — full speed
+CART_VEL_MAX  = 5.0         # mm per tick at MAX_ANGLE tilt (5mm × 10Hz = 50 mm/s max)
+MIN_DELTA     = 2.0         # mm — suppress command if TCP target didn't move enough
 
 # Workspace limits in world-frame mm
 X_MIN, X_MAX = -400.0,  400.0
@@ -223,7 +228,8 @@ def main():
     print(f"  Accel: ax={ax_s:+.3f}  ay={ay_s:+.3f}  az={az_s:+.3f}  m/s²")
 
     print()
-    print("Axes:  tilt forward/back=X   left/right=Y   flip face-down=Z")
+    print(f"Mapping:  pitch (fwd/back) -> X   roll (left/right) -> Y   Z fixed")
+    print(f"Dead zone: ±{DEAD_ANGLE}°  Full speed at: ±{MAX_ANGLE}°  Max: {CART_VEL_MAX} mm/tick")
     print("Press Enter to start tracking. Press Enter again to pause. Ctrl+C to exit.")
     print()
 
@@ -233,32 +239,46 @@ def main():
 
     # ── Filter state ─────────────────────────────────────────────────────────────
     G = 9.81
-    buf = deque(maxlen=MEDIAN_WINDOW)   # raw sample ring buffer for median filter
-    gx_s = ax_s / G
-    gy_s = ay_s / G
-    gz_s = az_s / G
+    buf = deque(maxlen=MEDIAN_WINDOW)
+    pitch_s = 0.0
+    roll_s  = 0.0
 
-    # Seed buffer
+    # Seed buffer and smoother from initial reading
     for _ in range(MEDIAN_WINDOW):
         buf.append((ax_s, ay_s, az_s))
+    ax_med = statistics.median(s[0] for s in buf)
+    ay_med = statistics.median(s[1] for s in buf)
+    az_med = statistics.median(s[2] for s in buf)
+    pitch_s = math.degrees(math.atan2(-ax_med, math.sqrt(ay_med**2 + az_med**2)))
+    roll_s  = math.degrees(math.atan2(ay_med, az_med))
 
     interval   = 1.0 / SEND_HZ
     move_n     = 0
     last_send  = time.monotonic()
-    last_tcp   = (tcp_x, tcp_y, tcp_z)     # last actually-sent position
+    last_tcp   = (tcp_x, tcp_y, tcp_z)
+
+    def tilt_to_vel(angle_deg):
+        """Map tilt angle to velocity with dead zone and linear ramp."""
+        a = abs(angle_deg)
+        if a < DEAD_ANGLE:
+            return 0.0
+        eff = min(a - DEAD_ANGLE, MAX_ANGLE - DEAD_ANGLE)
+        v = eff / (MAX_ANGLE - DEAD_ANGLE) * CART_VEL_MAX
+        return math.copysign(v, angle_deg)
 
     while not _stop:
         v = read_latest_accel(ser)
         if v:
             buf.append(v)
-            # Step 1: median per axis — kills tap/touch spikes
+            # Step 1: median — kills tap/touch spikes
             ax_med = statistics.median(s[0] for s in buf)
             ay_med = statistics.median(s[1] for s in buf)
             az_med = statistics.median(s[2] for s in buf)
-            # Step 2: EMA on median output — smooths residual noise
-            gx_s = ALPHA * (ax_med / G) + (1 - ALPHA) * gx_s
-            gy_s = ALPHA * (ay_med / G) + (1 - ALPHA) * gy_s
-            gz_s = ALPHA * (az_med / G) + (1 - ALPHA) * gz_s
+            # Step 2: EMA — smooths residual noise
+            pitch_raw = math.degrees(math.atan2(-ax_med, math.sqrt(ay_med**2 + az_med**2)))
+            roll_raw  = math.degrees(math.atan2(ay_med, az_med))
+            pitch_s = ALPHA * pitch_raw + (1 - ALPHA) * pitch_s
+            roll_s  = ALPHA * roll_raw  + (1 - ALPHA) * roll_s
 
         now = time.monotonic()
         if now - last_send < interval:
@@ -273,28 +293,20 @@ def main():
         if not active:
             continue
 
-        # Velocity: each gravity component → world axis velocity
-        # gx: nose of sensor dips forward → negative gx → +X
-        # gy: right roll → positive gy → +Y
-        # gz: 1.0 when flat; drops toward 0/-1 when face-down → +Z
-        dvx = deadzone(-gx_s, DEAD_XY) * CART_VEL_MAX
-        dvy = deadzone( gy_s, DEAD_XY) * CART_VEL_MAX
-        dvz = deadzone(gz_s - 1.0, DEAD_Z) * (-Z_VEL_MAX)  # face-down → move down
-
-        dvx = clamp(dvx, -CART_VEL_MAX, CART_VEL_MAX)
-        dvy = clamp(dvy, -CART_VEL_MAX, CART_VEL_MAX)
-        dvz = clamp(dvz, -Z_VEL_MAX,    Z_VEL_MAX)
+        # pitch → X velocity,  roll → Y velocity,  Z fixed
+        dvx = tilt_to_vel(pitch_s)
+        dvy = tilt_to_vel(roll_s)
 
         tcp_x = clamp(tcp_x + dvx, X_MIN, X_MAX)
         tcp_y = clamp(tcp_y + dvy, Y_MIN, Y_MAX)
-        tcp_z = clamp(tcp_z + dvz, Z_MIN, Z_MAX)
+        # tcp_z intentionally fixed
 
         # Send gate: skip command if target barely moved (prevents jitter chatter)
         moved = (abs(tcp_x - last_tcp[0]) > MIN_DELTA or
                  abs(tcp_y - last_tcp[1]) > MIN_DELTA or
                  abs(tcp_z - last_tcp[2]) > MIN_DELTA)
         if not moved:
-            print(f"[hold ]  gx:{gx_s:+.2f} gy:{gy_s:+.2f} gz:{gz_s:+.2f}"
+            print(f"[hold ]  pitch:{pitch_s:+6.1f}°  roll:{roll_s:+6.1f}°"
                   f"  ->  X:{tcp_x:+7.1f}  Y:{tcp_y:+7.1f}  Z:{tcp_z:+7.1f}",
                   flush=True)
             continue
@@ -323,7 +335,7 @@ def main():
                 _active = False
                 print("[PAUSED — press Enter to resume or Ctrl+C to exit]", flush=True)
 
-            print(f"[{move_n:05d}]  gx:{gx_s:+.2f} gy:{gy_s:+.2f} gz:{gz_s:+.2f}"
+            print(f"[{move_n:05d}]  pitch:{pitch_s:+6.1f}°  roll:{roll_s:+6.1f}°"
                   f"  ->  X:{tcp_x:+7.1f}  Y:{tcp_y:+7.1f}  Z:{tcp_z:+7.1f}",
                   flush=True)
         except OSError as e:
