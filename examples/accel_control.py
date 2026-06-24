@@ -34,23 +34,24 @@ ROBOT_PORT  = 9760
 SERIAL_PORT = "COM5"
 BAUD        = 115200
 
-SEND_HZ       = 10
+SEND_HZ       = 5           # reduced — each command is now a long cruise, not a micro-step
 MEDIAN_WINDOW = 9           # ~180ms spike filter
 ALPHA         = 0.08        # EMA smoothing
 
-# Tilt → joint velocity bands
+# Tilt → speed bands
 DEAD_ANGLE  = 10.0          # degrees — no movement inside
 BAND_DEG    = 15.0          # band width
-BAND_SPEEDS = [2.0, 4.0, 6.0, 8.0]   # °/step — larger steps = proper servo cycles
+BAND_PCT    = [15, 30, 50, 75]   # speed % sent to controller per band
 
-MIN_DELTA   = 0.5           # degrees — skip command if joint target barely changed
+# How far ahead of the actual arm position to project the target
+LOOKAHEAD   = 25.0          # degrees — arm cruises toward this; refreshed each tick
 
 # Joint soft limits (degrees)
 J1_MIN, J1_MAX = -150.0, 150.0
 J2_MIN, J2_MAX = -100.0,  70.0
 
 # Display range for the band bars
-_DISPLAY_MAX = DEAD_ANGLE + len(BAND_SPEEDS) * BAND_DEG   # 70°
+_DISPLAY_MAX = DEAD_ANGLE + len(BAND_PCT) * BAND_DEG   # 70°
 _BAND_CHARS  = ["1", "2", "3", "4"]
 
 _stop   = False
@@ -122,7 +123,7 @@ def query_status(sock):
     return d
 
 
-def send_joint_move(sock, joints, pack_id, verbose=False):
+def send_joint_move(sock, joints, pack_id, speed=20, smooth="0", verbose=False):
     payload = {
         "dsID": "HCRemoteCommand",
         "reqType": "AddRCC",
@@ -136,8 +137,8 @@ def send_joint_move(sock, joints, pack_id, verbose=False):
             "m4": f"{joints[4]:.3f}", "m5": f"{joints[5]:.3f}",
             "m6": "0.0", "m7": "0.0",
             "ckStatus": "0x3F",
-            "speed": "20.0",
-            "delay": "0.0", "tool": "0", "coord": "0", "smooth": "0",
+            "speed": str(float(speed)),
+            "delay": "0.0", "tool": "0", "coord": "0", "smooth": smooth,
         }],
     }
     enc = json.dumps(payload, separators=(",",":")).encode("ascii")
@@ -158,12 +159,13 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
-def tilt_to_vel(angle_deg):
+def tilt_to_speed(angle_deg):
+    """Return speed % (0 = dead zone, else BAND_PCT value) and direction sign."""
     a = abs(angle_deg)
     if a < DEAD_ANGLE:
-        return 0.0
-    band = min(int((a - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
-    return math.copysign(BAND_SPEEDS[band], angle_deg)
+        return 0, 0
+    band = min(int((a - DEAD_ANGLE) / BAND_DEG), len(BAND_PCT) - 1)
+    return BAND_PCT[band], int(math.copysign(1, angle_deg))
 
 
 def control_bar(angle, width=42):
@@ -174,23 +176,22 @@ def control_bar(angle, width=42):
         if adeg < DEAD_ANGLE:
             bar.append("·")
         else:
-            b = min(int((adeg - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
+            b = min(int((adeg - DEAD_ANGLE) / BAND_DEG), len(BAND_PCT) - 1)
             bar.append(_BAND_CHARS[b])
     cursor_px = int(angle / _DISPLAY_MAX * center)
     cursor_px = max(-center, min(center - 1, cursor_px))
     idx = center + cursor_px
-    vel = tilt_to_vel(angle)
-    bar[idx] = "│" if vel == 0.0 else ("►" if vel > 0 else "◄")
+    spd, _ = tilt_to_speed(angle)
+    bar[idx] = "│" if spd == 0 else ("►" if angle > 0 else "◄")
     return "".join(bar)
 
 
 def vel_label(angle):
-    v = tilt_to_vel(angle)
-    if v == 0.0:
+    spd, _ = tilt_to_speed(angle)
+    if spd == 0:
         return "HOLD"
-    band = min(int((abs(angle) - DEAD_ANGLE) / BAND_DEG), len(BAND_SPEEDS) - 1)
-    pct = round(BAND_SPEEDS[band] / BAND_SPEEDS[-1] * 100)
-    return f"{'→' if v > 0 else '←'}  band {band+1}  {pct}%"
+    band = min(int((abs(angle) - DEAD_ANGLE) / BAND_DEG), len(BAND_PCT) - 1)
+    return f"{'→' if angle > 0 else '←'}  band {band+1}  {spd}%"
 
 
 def draw(pitch, roll, j1, j2, joints, active, move_n, alarm_str):
@@ -207,9 +208,8 @@ def draw(pitch, roll, j1, j2, joints, active, move_n, alarm_str):
     print(f"               {vel_label(pitch)}")
     print()
     print(f"  · dead ±{DEAD_ANGLE:.0f}°   " +
-          "  ".join(f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°="
-                    f"{round(BAND_SPEEDS[i]/BAND_SPEEDS[-1]*100)}%"
-                    for i in range(len(BAND_SPEEDS))))
+          "  ".join(f"{DEAD_ANGLE+i*BAND_DEG:.0f}-{DEAD_ANGLE+(i+1)*BAND_DEG:.0f}°={BAND_PCT[i]}%"
+                    for i in range(len(BAND_PCT))))
     print()
     print(f"  Target   J1={j1:+7.2f}°   J2={j2:+7.2f}°")
     print(f"  Current  J1={joints[0]:+7.2f}°   J2={joints[1]:+7.2f}°  "
@@ -285,17 +285,17 @@ def main():
     pitch_s = math.degrees(math.atan2(-ax_med, math.sqrt(ay_med**2 + az_med**2)))
     roll_s  = math.degrees(math.atan2(ay_med, az_med))
 
-    # Joint targets start at current position; J3-J6 are frozen at startup
+    # J3-J6 frozen at startup — never micro-corrected
+    j3j6_base = joints[2:6]
     j1 = joints[0]
     j2 = joints[1]
-    last_j1, last_j2 = j1, j2
-    j3j6_base = joints[2:6]   # never changed — prevents micro-corrections from live noise
 
     interval  = 1.0 / SEND_HZ
     move_n    = 0
     last_send = time.monotonic()
     alarm_str = ""
     last_draw = 0.0
+    was_active = False  # track transition to dead zone for explicit stop
 
     while not _stop:
         v = read_latest_accel(ser)
@@ -326,35 +326,44 @@ def main():
         with _lock:
             active = _active
         if not active:
+            was_active = False
             continue
 
-        # Query arm state first — don't accumulate target while arm is busy.
+        # Always get live position — lookahead is relative to where arm actually is
         try:
             st = query_status(sock)
-            if st.get("isMoving") not in (0, "0"):
-                continue
             if "joints" in st:
-                joints = st["joints"]   # display only — j3j6_base stays frozen
+                joints = st["joints"]
         except OSError:
             pass
 
-        dj1 = tilt_to_vel(roll_s)
-        dj2 = tilt_to_vel(pitch_s)
+        spd1, dir1 = tilt_to_speed(roll_s)
+        spd2, dir2 = tilt_to_speed(pitch_s)
+        speed = max(spd1, spd2)
 
-        j1 = clamp(j1 + dj1, J1_MIN, J1_MAX)
-        j2 = clamp(j2 + dj2, J2_MIN, J2_MAX)
+        if speed == 0:
+            # Dead zone — send stop only on the transition from moving to stopped
+            if not was_active:
+                continue
+            was_active = False
+            j1 = joints[0]
+            j2 = joints[1]
+            target = [j1, j2] + j3j6_base
+            smooth = "0"
+        else:
+            # Active — project lookahead from actual current position
+            was_active = True
+            j1 = clamp(joints[0] + dir1 * LOOKAHEAD, J1_MIN, J1_MAX) if spd1 > 0 else joints[0]
+            j2 = clamp(joints[1] + dir2 * LOOKAHEAD, J2_MIN, J2_MAX) if spd2 > 0 else joints[1]
+            target = [j1, j2] + j3j6_base
+            smooth = "1"
 
-        moved = (abs(j1 - last_j1) > MIN_DELTA or abs(j2 - last_j2) > MIN_DELTA)
-        if not moved:
-            continue
-
-        last_j1, last_j2 = j1, j2
         move_n += 1
-        target = [j1, j2] + j3j6_base
 
         try:
             resp = send_joint_move(sock, target, pack_id=f"acc-{move_n:05d}",
-                                   verbose=(move_n == 1))
+                                   speed=speed if speed > 0 else 15,
+                                   smooth=smooth, verbose=(move_n == 1))
             resp_str = json.dumps(resp)
             has_error = any(w in resp_str.lower() for w in ("error","alarm","fail"))
             if has_error:
